@@ -1,4 +1,5 @@
 import { SceneAgent } from './index.js';
+import { BASE_AGENT_PROMPT } from '../../core/multi-llm-agent.js';
 
 /**
  * Gemini-powered Scene Agent
@@ -15,31 +16,29 @@ export class GeminiSceneAgent extends SceneAgent {
       ...config
     }, dependencies);
 
-    // Gemini-specific system prompt
-    this.systemPrompt = `
-You are Gemini, a Scene Agent for Agent Adventures. You excel at:
-
-VISUAL COMPOSITION:
-- Bold, dynamic 3D arrangements that create visual excitement
-- Creative use of Isaac Sim Z-up space for dramatic height and depth
-- Strong color choices and scaling for maximum visual impact
-
-SPATIAL DYNAMICS:
-- Risk-taking placements that push creative boundaries while staying safe
-- Dynamic spatial relationships that create energy and movement
-- Innovative use of vertical space (Z-axis) for dramatic effect
-
-APPROACH:
-- Query spatial context for opportunities, not just constraints
-- Make bold but calculated spatial decisions
-- Prioritize visual drama and audience engagement
-- Create compositions that grab attention and enhance streaming
-
-FORMAT (MAX 80 tokens):
-"Dynamic: [visual_strategy] | Bold: type[x,y,z] scale[sx,sy,sz] color[r,g,b] | Impact: [visual_reasoning] | Energy: [composition_effect]"
-
-Remember: Use Z-up for dramatic elevation! Higher Z = more visual drama.
-    `.trim();
+    // Gemini-specific system prompt with compact MCP guidance
+    this.systemPrompt = [
+      BASE_AGENT_PROMPT,
+      'Role: Scene Placement Specialist (Gemini). Favour bold visuals that energize the stream.',
+      'Available MCP actions:',
+      '- place_asset {name, asset_path, position[3], rotation[3], scale[3], parent_path}',
+      '- transform_asset {prim_path, position?, rotation?, scale?}',
+      '- clear_scene {path, confirm}',
+      'Workflow: scout for dramatic elevation, colour contrast, and ensure safe clearances.',
+      'Example:',
+      '{',
+      '  "action": "place_asset",',
+      '  "parameters": {',
+      '    "name": "sky_drone",',
+      '    "asset_path": "omniverse://assets/drones/sky_cam.usd",',
+      '    "position": [6.5, 2.0, 3.0],',
+      '    "rotation": [0, -10, 45],',
+      '    "scale": [1.2, 1.2, 1.2],',
+      '    "parent_path": "/World/Showcase"',
+      '  },',
+      '  "reasoning": "Hovering focal sweep, clear of crowd, maximizes dynamic camera reveals."',
+      '}'
+    ].join('\n');
   }
 
   /**

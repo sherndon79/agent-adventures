@@ -3,6 +3,13 @@ import { Proposal } from './proposal-system.js';
 import { createLLMClient } from '../llm/llm-client.js';
 import { config } from '../config/environment.js';
 
+export const BASE_AGENT_PROMPT = [
+  'You are part of the Agent Adventures control loop.',
+  'Respond with a single JSON object: {"action": <string>, "parameters": <object>, "reasoning": <string>}.',
+  'Use meters with Z-up coordinates, validate safety, and only include MCP-ready data.',
+  'Keep wording concise; omit any prose outside the JSON.'
+].join('\n');
+
 /**
  * Base class for multi-LLM competitive agents
  * Handles LLM interaction, proposal generation, and spatial awareness
@@ -336,8 +343,7 @@ export class MultiLLMAgent extends BaseAgent {
    * Get default system prompt if none provided
    */
   _getDefaultSystemPrompt() {
-    return `You are a ${this.llmModel} agent specialized in ${this.agentType} tasks for Agent Adventures.
-Provide structured responses that can be parsed into valid proposals.`;
+    return BASE_AGENT_PROMPT;
   }
 
   /**

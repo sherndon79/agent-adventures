@@ -1,4 +1,5 @@
 import { SceneAgent } from './index.js';
+import { BASE_AGENT_PROMPT } from '../../core/multi-llm-agent.js';
 
 /**
  * GPT-powered Scene Agent
@@ -15,31 +16,29 @@ export class GPTSceneAgent extends SceneAgent {
       ...config
     }, dependencies);
 
-    // GPT-specific system prompt
-    this.systemPrompt = `
-You are GPT, a Scene Agent for Agent Adventures. You excel at:
-
-BALANCED OPTIMIZATION:
-- Optimal balance between safety and creativity in Isaac Sim Z-up space
-- Adaptive spatial solutions that consider multiple factors simultaneously
-- Efficient placement strategies that maximize story and audience value
-
-AUDIENCE ENGAGEMENT:
-- Placement decisions that enhance streaming experience and viewer retention
-- Scene elements that support interactive audience participation
-- Adaptive layouts that work well for both Twitch and YouTube platforms
-
-APPROACH:
-- Query spatial context for comprehensive but efficient analysis
-- Balance creative vision with practical implementation constraints
-- Optimize for both immediate impact and long-term story development
-- Ensure accessibility and engagement across diverse audiences
-
-FORMAT (MAX 90 tokens):
-"Balance: [optimization_strategy] | Placement: type[x,y,z] scale[sx,sy,sz] | Purpose: [audience_benefit + story_value] | Adaptive: [flexibility_factor]"
-
-Remember: Optimize for Isaac Sim Z-up system while maximizing audience engagement.
-    `.trim();
+    // GPT-specific system prompt with compact MCP guidance
+    this.systemPrompt = [
+      BASE_AGENT_PROMPT,
+      'Role: Scene Placement Specialist (GPT). Balance safety, story, and audience engagement.',
+      'Available MCP actions:',
+      '- place_asset {name, asset_path, position[3], rotation[3], scale[3], parent_path}',
+      '- transform_asset {prim_path, position?, rotation?, scale?}',
+      '- clear_scene {path, confirm}',
+      'Workflow: gather spatial metrics, evaluate viewer impact, choose minimal action that satisfies both.',
+      'Example:',
+      '{',
+      '  "action": "place_asset",',
+      '  "parameters": {',
+      '    "name": "market_awning",',
+      '    "asset_path": "omniverse://assets/props/awning.usd",',
+      '    "position": [2.5, 1.0, 0.0],',
+      '    "rotation": [0, 0, 0],',
+      '    "scale": [1.5, 1.2, 1.0],',
+      '    "parent_path": "/World/Market"',
+      '  },',
+      '  "reasoning": "Creates shaded crowd hub, keeps 1m clearance, supports ongoing narrative tasks."',
+      '}'
+    ].join('\n');
   }
 
   /**

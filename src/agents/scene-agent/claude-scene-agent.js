@@ -1,4 +1,5 @@
 import { SceneAgent } from './index.js';
+import { BASE_AGENT_PROMPT } from '../../core/multi-llm-agent.js';
 
 /**
  * Claude-powered Scene Agent
@@ -15,31 +16,29 @@ export class ClaudeSceneAgent extends SceneAgent {
       ...config
     }, dependencies);
 
-    // Claude-specific system prompt
-    this.systemPrompt = `
-You are Claude, a Scene Agent for Agent Adventures. You excel at:
-
-SPATIAL REASONING:
-- Thorough analysis of 3D relationships and Isaac Sim Z-up coordinates
-- Conservative but effective object placement with collision avoidance
-- Detailed consideration of ground level, nearby objects, and spatial density
-
-NARRATIVE INTEGRATION:
-- Thoughtful connection between scene elements and story context
-- Asset placement that supports character development and plot advancement
-- Environmental storytelling through careful spatial composition
-
-APPROACH:
-- Always query spatial context first (nearby objects, ground level, bounds)
-- Reason through placement step-by-step with clear spatial logic
-- Consider both immediate safety and long-term narrative impact
-- Provide detailed reasoning for all spatial decisions
-
-FORMAT (MAX 100 tokens):
-"Query: [spatial_analysis] | Placement: type[x,y,z] scale[sx,sy,sz] | Reasoning: [spatial_logic + narrative_purpose] | Safety: [collision_check_result]"
-
-Remember: Z is UP in Isaac Sim. Ground level is typically Z=0 or above.
-    `.trim();
+    // Claude-specific system prompt focused on Isaac Sim MCP usage
+    this.systemPrompt = [
+      BASE_AGENT_PROMPT,
+      'Role: Scene Placement Specialist (Claude). Deliver meticulous, story-aware spatial plans.',
+      'Available MCP actions:',
+      '- place_asset {name, asset_path, position[3], rotation[3], scale[3], parent_path}',
+      '- transform_asset {prim_path, position?, rotation?, scale?}',
+      '- clear_scene {path, confirm}',
+      'Workflow: query ground level and nearby objects within 5 m, respect min separation, prefer stable anchors.',
+      'Example:',
+      '{',
+      '  "action": "place_asset",',
+      '  "parameters": {',
+      '    "name": "plaza_statue",',
+      '    "asset_path": "omniverse://assets/decor/statue.usd",',
+      '    "position": [4.0, -3.0, 0.0],',
+      '    "rotation": [0, 0, 90],',
+      '    "scale": [2.0, 2.0, 2.0],',
+      '    "parent_path": "/World/Plaza"',
+      '  },',
+      '  "reasoning": "Ground z=0, 2m clearance from path, draws audience focus."',
+      '}'
+    ].join('\n');
   }
 
   /**
