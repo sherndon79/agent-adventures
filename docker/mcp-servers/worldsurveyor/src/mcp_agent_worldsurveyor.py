@@ -1125,6 +1125,19 @@ async def worldsurveyor_metrics_prometheus() -> str:
     await worldsurveyor_server._initialize_client()
     return await worldsurveyor_server._metrics_prometheus({})
 
+@mcp.tool()
+async def worldsurveyor_clear_waypoints(confirm: bool = False) -> str:
+    """Clear all waypoints from the scene.
+
+    Args:
+        confirm: Confirmation flag for destructive operation
+    """
+    if worldsurveyor_server is None:
+        raise RuntimeError("WorldSurveyor server not initialized")
+    await worldsurveyor_server._initialize_client()
+    result = await worldsurveyor_server._clear_all_waypoints({"confirm": confirm})
+    return result
+
 
 async def main():
     """Main entry point for the FastMCP server."""

@@ -3,6 +3,21 @@
  * Manages overall dashboard state, WebSocket connection, and module coordination
  */
 
+const DASHBOARD_EVENT_TYPES = Object.freeze({
+  PLATFORM_STARTED: 'platform_started',
+  PLATFORM_STATUS: 'platform_status',
+  SYSTEM_HEALTH: 'system_health',
+  METRICS_UPDATE: 'metrics_update',
+  STREAM_STATUS: 'stream_status',
+  AGENT_PROPOSAL: 'agent_proposal',
+  JUDGE_DECISION: 'judge_decision',
+  COMPETITION_STARTED: 'competition_started',
+  COMPETITION_VOTING: 'competition_voting',
+  COMPETITION_COMPLETED: 'competition_completed',
+  SETTINGS_UPDATED: 'settings_updated',
+  ACTIVITY_LOG: 'activity_log'
+});
+
 class AgentAdventuresDashboard {
   constructor() {
     this.socket = null;
@@ -34,6 +49,10 @@ class AgentAdventuresDashboard {
       }
     };
 
+    this.activeCompetition = null;
+    this.messageHandlers = {};
+    this.seenCompetitionBatches = new Set();
+
     this.init();
   }
 
@@ -45,6 +64,9 @@ class AgentAdventuresDashboard {
 
     // Initialize modules
     this.initializeModules();
+
+    // Register message handlers after modules are ready
+    this.messageHandlers = this._createMessageHandlers();
 
     // Start WebSocket connection
     this.connectWebSocket();
@@ -127,6 +149,46 @@ class AgentAdventuresDashboard {
     }
   }
 
+  _createMessageHandlers() {
+    const handler = (fn) => (data, raw) => fn.call(this, data, raw);
+
+    return {
+      [DASHBOARD_EVENT_TYPES.PLATFORM_STARTED]: handler(this.handlePlatformStarted),
+      [DASHBOARD_EVENT_TYPES.PLATFORM_STATUS]: handler(this.handlePlatformStarted),
+      [DASHBOARD_EVENT_TYPES.SYSTEM_HEALTH]: handler(this.handleSystemUpdate),
+      [DASHBOARD_EVENT_TYPES.METRICS_UPDATE]: (data) => {
+        this.modules.metricsTracker?.updateMetrics(data);
+      },
+      [DASHBOARD_EVENT_TYPES.STREAM_STATUS]: (data) => {
+        this.modules.streamViewer?.updateStreamStatus(data);
+      },
+      [DASHBOARD_EVENT_TYPES.AGENT_PROPOSAL]: handler(this.onAgentProposal),
+      [DASHBOARD_EVENT_TYPES.JUDGE_DECISION]: handler(this.onJudgeDecision),
+      [DASHBOARD_EVENT_TYPES.COMPETITION_STARTED]: handler(this.onCompetitionStarted),
+      [DASHBOARD_EVENT_TYPES.COMPETITION_VOTING]: handler(this.onCompetitionVoting),
+      [DASHBOARD_EVENT_TYPES.COMPETITION_COMPLETED]: handler(this.onCompetitionCompleted),
+      [DASHBOARD_EVENT_TYPES.SETTINGS_UPDATED]: handler(this.onSettingsUpdated),
+      [DASHBOARD_EVENT_TYPES.ACTIVITY_LOG]: (data) => {
+        if (data && data.level && data.source && data.message) {
+          this.logActivity(data.level, data.source, data.message);
+        }
+      },
+      // Backwards compatibility with legacy event names
+      'platform:started': handler(this.handlePlatformStarted),
+      'platform:status': handler(this.handlePlatformStarted),
+      'agent:proposal': handler(this.onAgentProposal),
+      'proposal:decision_made': handler(this.onJudgeDecision),
+      'competition:started': handler(this.onCompetitionStarted),
+      'settings:updated': handler(this.onSettingsUpdated),
+      'system:metrics': (data) => {
+        this.modules.metricsTracker?.updateMetrics(data);
+      },
+      'stream:status': (data) => {
+        this.modules.streamViewer?.updateStreamStatus(data);
+      }
+    };
+  }
+
   connectWebSocket() {
     try {
       console.log(`🔌 Connecting to WebSocket: ${this.config.wsUrl}`);
@@ -182,7 +244,7 @@ class AgentAdventuresDashboard {
       }
     };
 
-    this.handleSystemUpdate(update);
+    this.handleSystemUpdate(update.data);
   }
 
   simulateMetricsUpdate() {
@@ -224,38 +286,18 @@ class AgentAdventuresDashboard {
 
   onSocketError(error) {
     console.error('❌ WebSocket error:', error);
-    this.logActivity('error', 'WEBSOCKET', `Connection error: ${error.message}`);
+    const errorMessage = error?.message || error?.type || 'Unknown WebSocket error';
+    this.logActivity('error', 'WEBSOCKET', `Connection error: ${errorMessage}`);
   }
 
   handleMessage(message) {
-    switch (message.type) {
-      case 'platform:started':
-        this.handlePlatformStarted(message.data);
-        break;
-      case 'platform:status':
-        this.handlePlatformStarted(message.data); // Same handler as platform:started
-        break;
-      case 'system_health':
-        this.handleSystemUpdate(message);
-        break;
-      case 'agent_proposal':
-        this.modules.agentCompetition?.handleAgentProposal(message.data);
-        break;
-      case 'judge_decision':
-        this.modules.agentCompetition?.handleJudgeDecision(message.data);
-        break;
-      case 'metrics_update':
-        this.modules.metricsTracker?.updateMetrics(message.data);
-        break;
-      case 'stream_status':
-        this.modules.streamViewer?.updateStreamStatus(message.data);
-        break;
-      case 'activity_log':
-        this.logActivity(message.data.level, message.data.source, message.data.message);
-        break;
-      default:
-        console.log('📨 Unknown message type:', message.type);
+    const handler = this.messageHandlers?.[message.type];
+    if (handler) {
+      handler(message.data, message);
+      return;
     }
+
+    console.log('📨 Unknown message type:', message.type);
   }
 
   handlePlatformStarted(data) {
@@ -316,10 +358,7 @@ class AgentAdventuresDashboard {
     this.systemData.system.isaacSim = connected ? 'connected' : (mockMode ? 'mock' : 'disconnected');
   }
 
-  handleSystemUpdate(message) {
-    const data = message.data;
-
-    // Update system health
+  handleSystemUpdate(data) {
     if (this.modules.systemHealth) {
       this.modules.systemHealth.updateHealth(data);
     }
@@ -370,7 +409,8 @@ class AgentAdventuresDashboard {
   handleSimulatedCommand(module, command, data) {
     // Simulate command responses for development
     setTimeout(() => {
-      switch (`${module}.${command}`) {
+      const commandKey = `${module}.${command}`;
+      switch (commandKey) {
         case 'streaming.start':
           this.systemData.system.streaming = true;
           this.modules.streamViewer?.updateStreamStatus({ active: true, quality: 'good', latency: 150 });
@@ -381,8 +421,15 @@ class AgentAdventuresDashboard {
           this.modules.streamViewer?.updateStreamStatus({ active: false });
           this.logActivity('system', 'STREAM', 'Stream stopped');
           break;
+        case 'competition.start':
         case 'agents.start_competition':
-          this.simulateCompetition(data.type);
+          this.onCompetitionStarted({
+            type: data.type,
+            batchId: `sim_${data.type || 'competition'}_${Date.now()}`,
+            simulated: true
+          });
+          this.simulateCompetitionWorkflow(data.type,
+            { batchId: this.activeCompetition?.batchId });
           break;
       }
     }, 500);
@@ -390,81 +437,206 @@ class AgentAdventuresDashboard {
 
   startCompetition(type) {
     this.logActivity('competition', 'SYSTEM', `Starting ${type} competition`);
-    this.sendCommand('agents', 'start_competition', { type });
+    this.sendCommand('competition', 'start', { type });
   }
 
-  simulateCompetition(type) {
-    this.logActivity('competition', 'SYSTEM', `Simulating ${type} competition`);
+  _normalizeAgentId(agentId = '') {
+    if (this.systemData.agents[agentId]) return agentId;
+    const shorthand = agentId.split('-')[0];
+    return this.systemData.agents[shorthand] ? shorthand : agentId;
+  }
 
-    // Simulate agent proposals
-    setTimeout(() => {
-      ['claude', 'gemini', 'gpt'].forEach((agent, index) => {
-        setTimeout(() => {
-          this.simulateAgentProposal(agent, type);
-        }, index * 1000);
-      });
-    }, 1000);
+  onCompetitionStarted(data = {}) {
+    const { type, batchId, simulated = false } = data;
+    if (!batchId || !type) return;
 
-    // Simulate judge decision
+    this.activeCompetition = { type, batchId, simulated };
+
+    if (!this.seenCompetitionBatches.has(batchId)) {
+      this.seenCompetitionBatches.add(batchId);
+      this.systemData.metrics.competitions += 1;
+      this.modules.metricsTracker?.updateMetrics(this.systemData.metrics);
+    }
+
+    this.modules.agentCompetition?.startCompetition(type, {
+      batchId,
+      simulated
+    });
+  }
+
+  onAgentProposal(proposal = {}) {
+    const agentId = proposal.agentId || proposal.agent;
+    if (!agentId) return;
+
+    const normalizedAgent = this._normalizeAgentId(agentId);
+    const agentData = this.systemData.agents[normalizedAgent];
+    if (agentData) {
+      agentData.proposals = (agentData.proposals || 0) + 1;
+    }
+
+    const enrichedProposal = {
+      ...proposal,
+      agentId,
+      agent: normalizedAgent,
+      proposalType: proposal.proposalType,
+      reasoning: proposal.reasoning || proposal.summary || '',
+      summary: proposal.summary || proposal.reasoning || ''
+    };
+
+    this.modules.agentCompetition?.handleAgentProposal(enrichedProposal);
+    this.modules.agentCompetition?.updateAgentStats(this.systemData.agents);
+  }
+
+  onJudgeDecision(decision = {}) {
+    const normalizedWinner = this._normalizeAgentId(decision.winner);
+
+    const agentData = this.systemData.agents[normalizedWinner];
+    if (agentData) {
+      agentData.wins = (agentData.wins || 0) + 1;
+    }
+
+    const enrichedDecision = {
+      ...decision,
+      winner: normalizedWinner
+    };
+
+    this.modules.agentCompetition?.handleJudgeDecision(enrichedDecision);
+    this.modules.agentCompetition?.updateAgentStats(this.systemData.agents);
+  }
+
+  onCompetitionVoting(payload = {}) {
+    if (typeof this.modules.agentCompetition?.handleVotingResult === 'function') {
+      this.modules.agentCompetition.handleVotingResult(payload);
+    }
+  }
+
+  onCompetitionCompleted(payload = {}) {
+    if (typeof this.modules.agentCompetition?.completeCompetition === 'function') {
+      this.modules.agentCompetition.completeCompetition(payload);
+    }
+    this.activeCompetition = null;
+  }
+
+  onSettingsUpdated(settings = {}) {
+    this.currentSettings = {
+      ...this.currentSettings,
+      ...settings
+    };
+
+    try {
+      localStorage.setItem('agent-adventures-settings', JSON.stringify(this.currentSettings));
+    } catch (error) {
+      console.warn('Failed to persist settings:', error);
+    }
+
+    this.loadCurrentSettings();
+
+    this.logActivity('system', 'SETTINGS',
+      `Updated: LLM=${this.currentSettings.llmApis}, MCP=${this.currentSettings.mcpCalls}, Stream=${this.currentSettings.streaming}, Judge=${this.currentSettings.judgePanel}`);
+  }
+
+  simulateCompetitionWorkflow(type, options = {}) {
+    const batchId = options.batchId || this.activeCompetition?.batchId || `sim_${type}_${Date.now()}`;
+
+    // Simulate agent proposals arriving over time
     setTimeout(() => {
-      this.simulateJudgeDecision(type);
+      this.simulateAgentProposals(type, batchId);
+    }, 500);
+
+    // Simulate voting updates
+    setTimeout(() => {
+      this.simulateMockVoting(batchId);
+    }, 2500);
+
+    // Simulate final judge decision shortly after voting
+    setTimeout(() => {
+      this.simulateJudgeDecision(batchId);
     }, 5000);
   }
 
-  simulateAgentProposal(agent, type) {
-    const proposals = {
-      claude: {
-        asset_placement: "Query: ground_level=0.0 nearby=2 density=0.05 | Placement: cube[5.2,3.1,0.6] scale[1.0,1.0,1.0] | Reasoning: thoughtful placement avoiding conflicts, supports narrative flow | Safety: 2 objects checked, 1.2m separation ensured",
-        camera_move: "Smooth transition to [8,-12,3] looking at [0,0,1.5] over 3.0s for dramatic character reveal while maintaining visual continuity",
-        story_advance: "Present meaningful choice: confront vs observe vs question, each leading to distinct character development paths"
-      },
-      gemini: {
-        asset_placement: "Dynamic: elevated_drama+bold_statement | Bold: sphere[0.0,0.0,2.5] scale[1.8,1.8,1.8] color[1.0,0.4,0.1] | Impact: creates commanding focal point for streaming audience | Energy: vibrant_focal_point+standalone_monument",
-        camera_move: "Arc shot from [15,-5,8] to [2,10,12] over 2.0s creating dynamic visual excitement with dramatic elevation change",
-        story_advance: "High-energy choices: fight with magic vs use environment vs attempt escape, maximizing visual drama and audience excitement"
-      },
-      gpt: {
-        asset_placement: "Balance: spatial_balanced+narrative_focused | Placement: cylinder[2.1,4.3,1.0] scale[1.0,1.0,1.0] | Purpose: character_development_enabler + streaming_visual_anchor | Adaptive: density_responsive+scale_flexible",
-        camera_move: "Optimized movement to [6,-10,4] targeting [1,2,1] over 2.5s balancing dramatic impact with viewer accessibility",
-        story_advance: "Balanced options: direct approach vs careful questioning vs strategic wait, each offering meaningful audience engagement"
-      }
-    };
+  simulateAgentProposals(type, batchId) {
+    const templates = this.getProposalsForType(type);
 
-    const proposal = {
-      agent,
-      type,
-      reasoning: proposals[agent][type] || `${agent} proposal for ${type}`,
-      timestamp: Date.now()
-    };
-
-    this.modules.agentCompetition?.handleAgentProposal(proposal);
-    this.systemData.agents[agent].proposals++;
+    templates.forEach((template, index) => {
+      setTimeout(() => {
+        this.onAgentProposal({
+          batchId,
+          agentId: template.agent,
+          proposalType: type,
+          reasoning: template.reasoning,
+          summary: template.summary,
+          timestamp: Date.now()
+        });
+        this.logActivity('competition', template.agent.toUpperCase(),
+          `Submitted ${type} proposal: "${template.summary}"`);
+      }, index * 600);
+    });
   }
 
-  simulateJudgeDecision(type) {
+  simulateMockVoting(batchId) {
+    this.logActivity('competition', 'SYSTEM', 'Audience voting begins! (simulated)');
+
+    const totalVotes = Math.floor(Math.random() * 200) + 100; // 100-300 votes
+    const votingDuration = 30000; // 30 seconds
+
+    let votesReceived = 0;
+    const voteInterval = setInterval(() => {
+      if (votesReceived >= totalVotes) {
+        clearInterval(voteInterval);
+        this.finalizeMockVoting(batchId, totalVotes);
+        return;
+      }
+
+      const batchSize = Math.floor(Math.random() * 10) + 5;
+      votesReceived += batchSize;
+
+      this.updateMockVoteDisplay(Math.min(votesReceived, totalVotes), totalVotes);
+
+    }, 1000);
+
+    // Emit an initial voting snapshot
+    this.onCompetitionVoting({
+      batchId,
+      totalVotes,
+      voteBreakdown: {
+        claude: Math.floor(totalVotes * 0.33),
+        gemini: Math.floor(totalVotes * 0.33),
+        gpt: Math.floor(totalVotes * 0.34)
+      },
+      method: 'mock_audience_voting',
+      timestamp: Date.now()
+    });
+  }
+
+  simulateJudgeDecision(batchId) {
+    const competition = this.activeCompetition && this.activeCompetition.batchId === batchId
+      ? this.activeCompetition
+      : null;
+
+    const type = competition?.type || 'asset_placement';
     const agents = ['claude', 'gemini', 'gpt'];
-    const winner = agents[Math.floor(Math.random() * agents.length)];
+    const winner = competition?.votingWinner || agents[Math.floor(Math.random() * agents.length)];
 
     const reasoning = {
-      claude: "Technical excellence with comprehensive spatial analysis and safety considerations",
-      gemini: "Bold visual impact creating maximum engagement and dramatic composition",
-      gpt: "Optimal balance of story advancement and audience accessibility"
+      claude: 'Technical excellence with comprehensive spatial analysis and safety considerations',
+      gemini: 'Bold visual impact creating maximum engagement and dramatic composition',
+      gpt: 'Optimal balance of story advancement and audience accessibility'
     };
 
     const decision = {
+      batchId,
       winner,
       reasoning: reasoning[winner],
       confidence: 'high',
       timestamp: Date.now()
     };
 
-    this.modules.agentCompetition?.handleJudgeDecision(decision);
-
-    // Update win statistics
-    this.systemData.agents[winner].wins++;
-    this.systemData.metrics.competitions++;
-
+    this.onJudgeDecision(decision);
     this.logActivity('competition', 'JUDGE', `${winner} wins: ${decision.reasoning}`);
+
+    setTimeout(() => {
+      this.simulateWinnerExecution(winner, type);
+    }, 2000);
   }
 
   resetMetrics() {
@@ -533,69 +705,6 @@ class AgentAdventuresDashboard {
     return !this.socket || this.socket.readyState !== WebSocket.OPEN;
   }
 
-  // Competition API
-  startCompetition(type) {
-    // Start competition locally in the dashboard
-    this.modules.agentCompetition?.startCompetition(type);
-
-    // Send competition start command to backend for real agent proposals
-    this.sendCommand('competition', 'start', { type });
-
-    // For now, simulate the full workflow with mock audience voting
-    this.simulateCompetitionWorkflow(type);
-
-    this.logActivity('competition', 'DASHBOARD', `Starting ${type} competition`);
-  }
-
-  simulateCompetitionWorkflow(type) {
-    // Simulate agent proposals (this would come from real agents via WebSocket)
-    setTimeout(() => {
-      this.simulateAgentProposals(type);
-    }, 1000);
-
-    // Simulate audience voting period
-    setTimeout(() => {
-      this.simulateMockVoting(type);
-    }, 3000);
-  }
-
-  simulateAgentProposals(type) {
-    const proposals = this.getProposalsForType(type);
-
-    proposals.forEach((proposal, index) => {
-      setTimeout(() => {
-        this.modules.agentCompetition?.handleAgentProposal(proposal);
-        this.logActivity('competition', proposal.agent.toUpperCase(),
-          `Submitted ${type} proposal: "${proposal.summary}"`);
-      }, index * 500);
-    });
-  }
-
-  simulateMockVoting(type) {
-    this.logActivity('competition', 'SYSTEM', 'Audience voting begins! (30 seconds)');
-
-    // Simulate votes coming in over time
-    const totalVotes = Math.floor(Math.random() * 200) + 100; // 100-300 votes
-    const votingDuration = 30000; // 30 seconds
-
-    let votesReceived = 0;
-    const voteInterval = setInterval(() => {
-      if (votesReceived >= totalVotes) {
-        clearInterval(voteInterval);
-        this.finalizeMockVoting(type, totalVotes);
-        return;
-      }
-
-      // Add 5-15 votes per interval
-      const batchSize = Math.floor(Math.random() * 10) + 5;
-      votesReceived += batchSize;
-
-      // Update vote display (this would be real-time in production)
-      this.updateMockVoteDisplay(Math.min(votesReceived, totalVotes), totalVotes);
-
-    }, 1000);
-  }
-
   updateMockVoteDisplay(current, total) {
     // Simulate realistic vote distribution
     const claudeVotes = Math.floor(current * (0.3 + Math.random() * 0.4));
@@ -606,7 +715,7 @@ class AgentAdventuresDashboard {
       `Claude: ${claudeVotes}, Gemini: ${geminiVotes}, GPT: ${gptVotes} (${current}/${total} votes)`);
   }
 
-  finalizeMockVoting(type, totalVotes) {
+  finalizeMockVoting(batchId, totalVotes) {
     // Determine winner with realistic distribution
     const agents = ['claude', 'gemini', 'gpt'];
     const weights = [0.35, 0.32, 0.33]; // Slightly favor Claude
@@ -635,22 +744,26 @@ class AgentAdventuresDashboard {
 
     const winPercentage = Math.round((votes[winner] / totalVotes) * 100);
 
-    // Announce results
     this.logActivity('competition', 'RESULTS',
-      `🏆 ${winner.toUpperCase()} WINS with ${votes[winner]} votes (${winPercentage}%)`);
+      `🏆 ${winner.toUpperCase()} leads audience voting with ${votes[winner]} votes (${winPercentage}%)`);
 
     this.logActivity('competition', 'RESULTS',
       `Final: Claude ${votes.claude}, Gemini ${votes.gemini}, GPT ${votes.gpt}`);
 
-    // Simulate winner execution
-    setTimeout(() => {
-      this.simulateWinnerExecution(winner, type);
-    }, 2000);
+    this.onCompetitionVoting({
+      batchId,
+      winningAgentId: winner,
+      totalVotes,
+      voteBreakdown: votes,
+      method: 'mock_audience_voting',
+      timestamp: Date.now()
+    });
 
-    // Update agent statistics
-    this.systemData.agents[winner].wins++;
-    this.systemData.metrics.competitions++;
-    this.modules.agentCompetition?.updateAgentStats(this.systemData.agents);
+    if (this.activeCompetition && this.activeCompetition.batchId === batchId) {
+      this.activeCompetition.votingWinner = winner;
+    }
+
+    return winner;
   }
 
   simulateWinnerExecution(winner, type) {

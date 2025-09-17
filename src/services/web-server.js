@@ -9,6 +9,15 @@ import { createServer } from 'http';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { WorldBuilderClient } from './mcp-clients/worldbuilder-client.js';
+import {
+  DASHBOARD_EVENT_TYPES,
+  adaptAgentProposal,
+  adaptCompetitionCompleted,
+  adaptCompetitionVoting,
+  adaptJudgeDecision,
+  adaptPlatformStatus,
+  adaptSettings
+} from './dashboard/dashboard-event-adapter.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -116,6 +125,29 @@ export class WebServerService {
           console.warn('WebSocket send error:', error.message);
           this.clients.delete(client);
         }
+      }
+    }
+  }
+
+  _broadcastExcept(excluded, type, data) {
+    if (this.clients.size <= 1) return;
+
+    const message = JSON.stringify({
+      type,
+      data,
+      timestamp: Date.now()
+    });
+
+    for (const client of this.clients) {
+      if (client === excluded || client.readyState !== client.OPEN) {
+        continue;
+      }
+
+      try {
+        client.send(message);
+      } catch (error) {
+        console.warn('WebSocket send error:', error.message);
+        this.clients.delete(client);
       }
     }
   }
@@ -289,29 +321,48 @@ export class WebServerService {
    * Setup event listeners for platform events
    */
   _setupEventListeners() {
-    // Listen to platform events and broadcast to dashboard
+    // Listen to platform events and broadcast to dashboard with normalised payloads
     this.eventBus.subscribe('platform:started', (event) => {
-      this.broadcast('platform:started', event.payload);
+      this.broadcast(
+        DASHBOARD_EVENT_TYPES.PLATFORM_STARTED,
+        adaptPlatformStatus(event.payload)
+      );
     });
 
     this.eventBus.subscribe('agent:proposal', (event) => {
-      this.broadcast('agent:proposal', event.payload);
+      const adapted = adaptAgentProposal(event.payload);
+      if (adapted.agentId) {
+        this.broadcast(DASHBOARD_EVENT_TYPES.AGENT_PROPOSAL, adapted);
+      }
     });
 
-    this.eventBus.subscribe('agent:competition', (event) => {
-      this.broadcast('agent:competition', event.payload);
+    this.eventBus.subscribe('proposal:decision_made', (event) => {
+      this.broadcast(
+        DASHBOARD_EVENT_TYPES.JUDGE_DECISION,
+        adaptJudgeDecision(event.payload)
+      );
     });
 
-    this.eventBus.subscribe('mcp:command', (event) => {
-      this.broadcast('mcp:command', event.payload);
+    this.eventBus.subscribe('competition:voting_result', (event) => {
+      this.broadcast(
+        DASHBOARD_EVENT_TYPES.COMPETITION_VOTING,
+        adaptCompetitionVoting(event.payload)
+      );
+    });
+
+    this.eventBus.subscribe('competition:completed', (event) => {
+      this.broadcast(
+        DASHBOARD_EVENT_TYPES.COMPETITION_COMPLETED,
+        adaptCompetitionCompleted(event.payload)
+      );
     });
 
     this.eventBus.subscribe('system:metrics', (event) => {
-      this.broadcast('system:metrics', event.payload);
+      this.broadcast(DASHBOARD_EVENT_TYPES.SYSTEM_METRICS, event.payload);
     });
 
     this.eventBus.subscribe('stream:status', (event) => {
-      this.broadcast('stream:status', event.payload);
+      this.broadcast(DASHBOARD_EVENT_TYPES.STREAM_STATUS, event.payload);
     });
   }
 
@@ -325,11 +376,15 @@ export class WebServerService {
         break;
 
       case 'request:status':
-        // Send current platform status
-        this.broadcast('platform:status', {
-          clients: this.clients.size,
-          uptime: process.uptime()
-        });
+        // Send current platform status to requester only
+        ws.send(JSON.stringify({
+          type: DASHBOARD_EVENT_TYPES.PLATFORM_STATUS,
+          data: adaptPlatformStatus({
+            clients: this.clients.size,
+            uptime: process.uptime()
+          }),
+          timestamp: Date.now()
+        }));
         break;
 
       case 'command':
@@ -354,8 +409,8 @@ export class WebServerService {
       // Send current platform status including agent information
       const platformStatus = this._getPlatformStatus();
       ws.send(JSON.stringify({
-        type: 'platform:status',
-        data: platformStatus,
+        type: DASHBOARD_EVENT_TYPES.PLATFORM_STATUS,
+        data: adaptPlatformStatus(platformStatus),
         timestamp: Date.now()
       }));
     }
@@ -415,12 +470,15 @@ export class WebServerService {
 
     // Acknowledge the command
     ws.send(JSON.stringify({
-      type: 'competition:started',
+      type: DASHBOARD_EVENT_TYPES.COMPETITION_STARTED,
       data: { type, batchId },
       timestamp: Date.now()
     }));
 
     console.log(`📨 Emitted proposal:request for ${type} competition (batch: ${batchId})`);
+
+    // Notify other dashboard clients
+    this._broadcastExcept(ws, DASHBOARD_EVENT_TYPES.COMPETITION_STARTED, { type, batchId });
   }
 
   /**
@@ -443,14 +501,19 @@ export class WebServerService {
     };
 
     // Acknowledge the settings update
+    const adaptedSettings = adaptSettings(settings);
+
     ws.send(JSON.stringify({
-      type: 'settings:updated',
-      data: settings,
+      type: DASHBOARD_EVENT_TYPES.SETTINGS_UPDATED,
+      data: adaptedSettings,
       timestamp: Date.now()
     }));
 
     // Broadcast to all clients
-    this.broadcast('settings:updated', settings);
+    this.broadcast(
+      DASHBOARD_EVENT_TYPES.SETTINGS_UPDATED,
+      adaptedSettings
+    );
 
     console.log(`✅ Settings updated: LLM=${settings.llmApis}, MCP=${settings.mcpCalls}, Stream=${settings.streaming}, Judge=${settings.judgePanel}`);
   }
@@ -459,7 +522,13 @@ export class WebServerService {
    * Get current platform status
    */
   _getPlatformStatus() {
-    const isMockMode = process.env.MOCK_MCP_MODE === 'true';
+    const envMockMcp = process.env.MOCK_MCP_MODE === 'true';
+    const envMockStreaming = process.env.MOCK_STREAMING_MODE === 'true';
+    const mcpMockMode = this.currentSettings.mcpCalls === false || envMockMcp;
+    const streamingMockMode = this.currentSettings.streaming === false || envMockStreaming;
+    const llmMockMode = this.currentSettings.llmApis === false;
+
+    const isaacConnected = !mcpMockMode && Boolean(this.worldBuilderClient);
 
     return {
       agentsStarted: 3, // This should come from the agent manager
@@ -468,14 +537,14 @@ export class WebServerService {
       uptime: process.uptime(),
       clients: this.clients.size,
       services: {
-        isaacSim: isMockMode ? 'mock' : 'healthy',
+        isaacSim: mcpMockMode ? 'mock' : 'healthy',
         eventBus: 'healthy',
-        agents: 'healthy',
-        streaming: process.env.MOCK_STREAMING_MODE === 'true' ? 'mock' : 'inactive'
+        agents: llmMockMode ? 'mock' : 'healthy',
+        streaming: streamingMockMode ? 'mock' : 'inactive'
       },
       isaacSim: {
-        connected: !isMockMode,
-        mockMode: isMockMode,
+        connected: isaacConnected,
+        mockMode: mcpMockMode,
         mcpUrls: {
           worldBuilder: process.env.WORLDBUILDER_MCP_URL,
           worldViewer: process.env.WORLDVIEWER_MCP_URL,

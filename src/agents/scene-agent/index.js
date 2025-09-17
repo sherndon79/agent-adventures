@@ -115,6 +115,12 @@ export class SceneAgent extends MultiLLMAgent {
       density: null
     };
 
+    // Check if we should use mock mode for MCP specifically
+    if (!this.platformSettings.mcpCalls || !this.mcpClients.worldBuilder) {
+      console.log(`[${this.id}] Using mock spatial data (mcpCalls: ${this.platformSettings.mcpCalls}, mcpClient: ${!!this.mcpClients.worldBuilder})`);
+      return this._getMockSpatialData(targetArea, radius);
+    }
+
     try {
       // Get overall scene state
       if (this.mcpClients.worldBuilder) {
@@ -523,13 +529,24 @@ export class SceneAgent extends MultiLLMAgent {
   _validateSceneProposal(proposalData, spatialContext) {
     const errors = [];
 
+    // Debug: Log proposal data structure
+    console.log(`[${this.id}] Validating proposal data:`, JSON.stringify(proposalData.data, null, 2));
+
     // Check required fields
     if (!proposalData.data.position || !Array.isArray(proposalData.data.position)) {
       errors.push('Invalid or missing position array');
     }
 
+    // Validate and normalize element_type - critical for Isaac Sim
     if (!proposalData.data.element_type) {
-      errors.push('Missing element_type');
+      // Try to normalize from 'type' field if present
+      if (proposalData.data.type) {
+        proposalData.data.element_type = proposalData.data.type;
+        console.log(`[${this.id}] Normalized 'type' to 'element_type': ${proposalData.data.type}`);
+      } else {
+        console.error(`[${this.id}] Missing element_type in proposal:`, proposalData.data);
+        errors.push('Missing element_type - required for Isaac Sim object creation');
+      }
     }
 
     if (!proposalData.data.name) {
@@ -623,6 +640,48 @@ export class SceneAgent extends MultiLLMAgent {
     }
 
     return issues;
+  }
+
+  /**
+   * Get mock spatial data for development/testing
+   */
+  _getMockSpatialData(targetArea, radius) {
+    const mockNearbyObjects = [
+      {
+        name: 'mock_cube_1',
+        usd_path: '/World/mock_cube_1',
+        position: [2.0, 1.5, 0.5],
+        bounds: { min: [1.5, 1.0, 0.0], max: [2.5, 2.0, 1.0] },
+        element_type: 'cube'
+      },
+      {
+        name: 'mock_sphere_1',
+        usd_path: '/World/mock_sphere_1',
+        position: [-1.0, -2.0, 0.5],
+        bounds: { min: [-1.5, -2.5, 0.0], max: [-0.5, -1.5, 1.0] },
+        element_type: 'sphere'
+      }
+    ];
+
+    return {
+      scene: {
+        total_objects: 5,
+        scene_bounds: { min: [-10, -10, 0], max: [10, 10, 5] },
+        metadata: { mock_mode: true }
+      },
+      nearby: {
+        objects: mockNearbyObjects,
+        count: mockNearbyObjects.length,
+        search_radius: radius
+      },
+      groundLevel: { ground_level: 0.0, confidence: 1.0, mock_mode: true },
+      bounds: {
+        min: [-10, -10, 0],
+        max: [10, 10, 5],
+        center: [0, 0, 2.5]
+      },
+      density: this._calculateSpatialDensity({ objects: mockNearbyObjects }, radius)
+    };
   }
 }
 

@@ -58,6 +58,9 @@ class CameraResponseFormatter:
         'set_position': "✅ Camera position set to {position}",
         'frame_object': "✅ Camera framed on object: {object_path}",
         'orbit_camera': "✅ Camera positioned in orbit around {center}",
+        'smooth_move': "🎬 Smooth camera movement started",
+        'arc_shot': "🎬 Arc shot movement started",
+        'orbit_shot': "🎬 Orbital shot movement started",
         'stop_movement': "✅ {message}",
         'get_status': "📷 Camera Status",
         'health_check': "✅ Extension Health: {status}"
@@ -100,6 +103,33 @@ class CameraResponseFormatter:
                 message += f"\n• Distance: {format_vars['distance']}"
                 message += f"\n• Elevation: {format_vars['elevation']}°"
                 message += f"\n• Azimuth: {format_vars['azimuth']}°"
+        elif operation == 'orbit_shot':
+            # Show orbital shot parameters
+            if 'center' in format_vars:
+                center = format_vars['center']
+                message += f"\n📍 Center: [{center[0]:.2f}, {center[1]:.2f}, {center[2]:.2f}]"
+            if 'distance' in format_vars:
+                message += f"\n🔄 Distance: {format_vars['distance']:.1f}"
+            if 'duration' in format_vars:
+                message += f"\n⏱️ Duration: {format_vars['duration']:.1f}s"
+            if 'start_azimuth' in format_vars and 'end_azimuth' in format_vars:
+                start_az = format_vars['start_azimuth']
+                end_az = format_vars['end_azimuth']
+                total_rotation = abs(end_az - start_az)
+                message += f"\n🌀 Rotation: {start_az:.0f}° → {end_az:.0f}° ({total_rotation:.0f}°)"
+            if 'elevation' in format_vars:
+                message += f"\n📐 Elevation: {format_vars['elevation']:.1f}°"
+            if 'target_object' in format_vars and format_vars['target_object']:
+                message += f"\n🎯 Target: {format_vars['target_object']}"
+            if 'start_target' in format_vars and 'end_target' in format_vars:
+                start_tgt = format_vars['start_target']
+                end_tgt = format_vars['end_target']
+                message += f"\n🎯 Focus: [{start_tgt[0]:.1f},{start_tgt[1]:.1f},{start_tgt[2]:.1f}] → [{end_tgt[0]:.1f},{end_tgt[1]:.1f},{end_tgt[2]:.1f}]"
+            elif 'start_target' in format_vars:
+                start_tgt = format_vars['start_target']
+                message += f"\n🎯 Focus: [{start_tgt[0]:.1f},{start_tgt[1]:.1f},{start_tgt[2]:.1f}]"
+            if 'orbit_count' in format_vars and format_vars['orbit_count'] != 1.0:
+                message += f"\n🔄 Orbits: {format_vars['orbit_count']:.1f}"
         elif operation == 'get_status':
             camera_status = response.get('camera_status') or response
             message = "📷 Camera Status:\n"
@@ -398,18 +428,26 @@ async def worldviewer_smooth_move(
         execution_mode: Execution mode (auto or manual)
     """
     await worldviewer_server._initialize_client()
-    result = await _smooth_move({
+    params = {
         "start_position": start_position,
         "end_position": end_position,
         "start_target": start_target,
         "end_target": end_target,
-        "start_rotation": start_rotation,
-        "end_rotation": end_rotation,
-        "speed": speed,
-        "duration": duration,
         "easing_type": easing_type,
         "execution_mode": execution_mode
-    })
+    }
+
+    # Only include optional parameters if they're not None
+    if start_rotation is not None:
+        params["start_rotation"] = start_rotation
+    if end_rotation is not None:
+        params["end_rotation"] = end_rotation
+    if speed is not None:
+        params["speed"] = speed
+    if duration is not None:
+        params["duration"] = duration
+
+    result = await _smooth_move(params)
     return result
 
 @mcp.tool()
@@ -436,16 +474,78 @@ async def worldviewer_arc_shot(
         execution_mode: Execution mode (auto or manual)
     """
     await worldviewer_server._initialize_client()
-    result = await worldviewer_server._arc_shot({
+    params = {
         "start_position": start_position,
         "end_position": end_position,
         "start_target": start_target,
         "end_target": end_target,
-        "speed": speed,
-        "duration": duration,
         "movement_style": movement_style,
         "execution_mode": execution_mode
-    })
+    }
+
+    # Only include optional parameters if they're not None
+    if speed is not None:
+        params["speed"] = speed
+    if duration is not None:
+        params["duration"] = duration
+
+    result = await _arc_shot(params)
+    return result
+
+@mcp.tool()
+async def worldviewer_orbit_shot(
+    center: List[float],
+    distance: float = 10.0,
+    start_azimuth: float = 0.0,
+    end_azimuth: float = 360.0,
+    elevation: float = 15.0,
+    duration: float = 8.0,
+    target_object: Optional[str] = None,
+    start_position: Optional[List[float]] = None,
+    start_target: Optional[List[float]] = None,
+    end_target: Optional[List[float]] = None,
+    orbit_count: float = 1.0,
+    execution_mode: str = "auto"
+) -> str:
+    """Animated orbital camera movement around a center point or target object.
+
+    Args:
+        center: Center point to orbit around as [x, y, z]
+        distance: Orbital radius from center (default 10.0)
+        start_azimuth: Starting azimuth angle in degrees (default 0.0)
+        end_azimuth: Ending azimuth angle in degrees (default 360.0)
+        elevation: Elevation angle in degrees (default 15.0)
+        duration: Movement duration in seconds (default 8.0)
+        target_object: USD path to orbit around (optional, uses center if not provided)
+        start_position: Starting camera position for target object mode (optional)
+        start_target: Starting look-at target for view calculation (optional)
+        end_target: Ending look-at target for smooth focus transitions (optional)
+        orbit_count: Number of full orbits (default 1.0)
+        execution_mode: Execution mode (auto or manual)
+    """
+    await worldviewer_server._initialize_client()
+    params = {
+        "center": center,
+        "distance": distance,
+        "start_azimuth": start_azimuth,
+        "end_azimuth": end_azimuth,
+        "elevation": elevation,
+        "duration": duration,
+        "orbit_count": orbit_count,
+        "execution_mode": execution_mode
+    }
+
+    # Only include optional parameters if they're not None
+    if target_object is not None:
+        params["target_object"] = target_object
+    if start_position is not None:
+        params["start_position"] = start_position
+    if start_target is not None:
+        params["start_target"] = start_target
+    if end_target is not None:
+        params["end_target"] = end_target
+
+    result = await _orbit_shot(params)
     return result
 
 @mcp.tool()
@@ -714,7 +814,23 @@ async def _arc_shot(args: Dict[str, Any]) -> str:
             end_target=args.get("end_target"),
             duration=args.get("duration", 6.0)
         )
-    
+
+async def _orbit_shot(args: Dict[str, Any]) -> str:
+        """Execute animated orbital camera movement around center point or target object"""
+        return await execute_camera_operation(
+            "orbit_shot", "POST", "/camera/orbit_shot", args,
+            center=args.get("center"),
+            distance=args.get("distance", 10.0),
+            start_azimuth=args.get("start_azimuth", 0.0),
+            end_azimuth=args.get("end_azimuth", 360.0),
+            elevation=args.get("elevation", 15.0),
+            duration=args.get("duration", 8.0),
+            target_object=args.get("target_object"),
+            start_target=args.get("start_target"),
+            end_target=args.get("end_target"),
+            orbit_count=args.get("orbit_count", 1.0)
+        )
+
 async def _stop_movement(args: Dict[str, Any]) -> str:
         """Stop all active cinematic movements"""
         return await execute_camera_operation(

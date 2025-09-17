@@ -292,10 +292,9 @@ export class MultiLLMAgent extends BaseAgent {
    * Call LLM to generate proposal using real API
    */
   async _callLLM(llmContext) {
-    // Check both config mock mode and platform settings
+    // Check both config mock mode and platform settings for LLM specifically
     if (config.tokens.mockLLMMode || !this.platformSettings.llmApis) {
-      // Use mock if explicitly in mock mode OR if dashboard disabled LLM APIs
-      console.log(`[${this.id}] Using mock LLM response (mockMode: ${config.tokens.mockLLMMode}, dashboardSetting: ${this.platformSettings.llmApis})`);
+      console.log(`[${this.id}] Using mock LLM response (mockLLM: ${config.tokens.mockLLMMode}, llmApis: ${this.platformSettings.llmApis})`);
       return this._mockLLMResponse(llmContext);
     }
 

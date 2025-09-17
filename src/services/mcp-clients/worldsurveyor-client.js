@@ -34,6 +34,13 @@ export class WorldSurveyorClient extends HTTPMCPClient {
 
     return await this.executeCommand('worldsurveyor_list_waypoints', params);
   }
+
+  /**
+   * Clear all waypoints from the scene
+   */
+  async clearWaypoints(confirm = false) {
+    return await this.executeCommand('worldsurveyor_clear_waypoints', { confirm });
+  }
 }
 
 export default WorldSurveyorClient;

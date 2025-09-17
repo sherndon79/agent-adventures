@@ -19,23 +19,25 @@ class AgentCompetition {
   }
 
   handleAgentProposal(proposal) {
-    const { agent, type, reasoning, timestamp } = proposal;
+    const agent = proposal.agent || proposal.agentId;
+    const { proposalType: type, reasoning, summary, timestamp } = proposal;
 
     // Store proposal
-    this.proposals[agent] = { type, reasoning, timestamp };
+    this.proposals[agent] = {
+      type,
+      reasoning: reasoning || summary,
+      timestamp
+    };
 
     // Update agent status
     this.updateAgentStatus(agent, 'thinking');
 
     // Display proposal in agent card
-    this.displayProposal(agent, reasoning);
+    this.displayProposal(agent, reasoning || summary || '');
 
     // Log activity
     this.dashboard.logActivity('competition', agent.toUpperCase(),
       `Submitted ${type} proposal`);
-
-    // Update proposal count
-    this.incrementProposalCount(agent);
   }
 
   displayProposal(agent, reasoning) {
@@ -81,9 +83,6 @@ class AgentCompetition {
 
     // Display judge decision
     this.displayJudgeDecision(decision);
-
-    // Update win statistics
-    this.incrementWinCount(winner);
 
     // Log judge decision
     this.dashboard.logActivity('competition', 'JUDGE',
@@ -133,27 +132,6 @@ class AgentCompetition {
 
     // Update dashboard system data
     this.dashboard.updateAgentStatus(agent, status);
-  }
-
-  incrementProposalCount(agent) {
-    const proposalElement = document.getElementById(`${agent}-proposals`);
-    if (proposalElement) {
-      const current = parseInt(proposalElement.textContent) || 0;
-      proposalElement.textContent = current + 1;
-    }
-
-    // Update win rate
-    this.updateWinRate(agent);
-  }
-
-  incrementWinCount(agent) {
-    const systemData = this.dashboard.getSystemData();
-    const agentData = systemData.agents[agent];
-
-    if (agentData) {
-      agentData.wins++;
-      this.updateWinRate(agent);
-    }
   }
 
   updateWinRate(agent) {
@@ -229,16 +207,42 @@ class AgentCompetition {
     };
   }
 
-  startCompetition(type) {
+  startCompetition(type, options = {}) {
     this.clearCompetition();
     this.activeCompetition = {
       type,
       startTime: Date.now(),
-      status: 'waiting_for_proposals'
+      status: 'waiting_for_proposals',
+      batchId: options.batchId || null,
+      simulated: options.simulated || false
     };
 
     this.dashboard.logActivity('competition', 'SYSTEM',
-      `New ${type} competition started`);
+      `New ${type} competition started${options.batchId ? ` (batch ${options.batchId})` : ''}`);
+  }
+
+  handleVotingResult(result) {
+    if (!result) return;
+
+    const lines = Object.entries(result.voteBreakdown || {})
+      .map(([agent, votes]) => `${agent.toUpperCase()}: ${votes}`)
+      .join(', ');
+
+    this.dashboard.logActivity('competition', 'VOTES',
+      `Audience voting snapshot • ${lines}`);
+  }
+
+  completeCompetition(event) {
+    const details = event?.result || {};
+    const winner = details.winner || details.winningAgentId || details.winningAgent;
+
+    if (winner) {
+      const batchLabel = event?.batchId ? ` ${event.batchId}` : '';
+      this.dashboard.logActivity('competition', 'SYSTEM',
+        `Competition${batchLabel} finished. Winner: ${winner}`);
+    }
+
+    this.clearCompetition();
   }
 
   destroy() {

@@ -10,6 +10,7 @@ import { StoryState } from './core/story-state.js';
 import { AgentManager } from './core/agent-manager.js';
 import { CompetitionManager } from './core/competition-manager.js';
 import { WebServerService } from './services/web-server.js';
+import { MCPClientManager } from './services/mcp-clients/index.js';
 import { pathToFileURL } from 'url';
 
 class AdventuresPlatform {
@@ -64,6 +65,7 @@ class AdventuresPlatform {
     this.agentManager = null;
     this.competitionManager = null;
     this.webServer = null;
+    this.mcpClientManager = null;
   }
 
   /**
@@ -240,10 +242,18 @@ class AdventuresPlatform {
     this.storyState = new StoryState({}, this.config.storyState);
     console.log('   ✓ Story State initialized');
 
-    // Create agent manager with dependencies
+    // Initialize MCP clients
+    this.mcpClientManager = new MCPClientManager({
+      mockMode: process.env.MOCK_MCP_MODE === 'true',
+      enableLogging: this.config.agentManager.enableLogging !== false
+    });
+    console.log('   ✓ MCP Client Manager initialized');
+
+    // Create agent manager with dependencies including MCP clients
     const dependencies = {
       eventBus: this.eventBus,
       storyState: this.storyState,
+      mcpClients: this.mcpClientManager.getAllClients(),
       config: this.config
     };
 

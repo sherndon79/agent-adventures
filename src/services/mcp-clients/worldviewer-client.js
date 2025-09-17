@@ -85,6 +85,29 @@ export class WorldViewerClient extends HTTPMCPClient {
   }
 
   /**
+   * Animated orbital camera movement around a center point or target object
+   */
+  async orbitShot(center, distance = 10.0, startAzimuth = 0.0, endAzimuth = 360.0, elevation = 15.0, duration = 8.0, options = {}) {
+    const params = {
+      center,
+      distance,
+      start_azimuth: startAzimuth,
+      end_azimuth: endAzimuth,
+      elevation,
+      duration
+    };
+
+    if (options.targetObject) params.target_object = options.targetObject;
+    if (options.startPosition) params.start_position = options.startPosition;
+    if (options.startTarget) params.start_target = options.startTarget;
+    if (options.endTarget) params.end_target = options.endTarget;
+    if (options.orbitCount) params.orbit_count = options.orbitCount;
+    if (options.executionMode) params.execution_mode = options.executionMode;
+
+    return await this.executeCommand('worldviewer_orbit_shot', params);
+  }
+
+  /**
    * Cinematic arc shot between positions
    */
   async arcShot(startPosition, endPosition, startTarget, endTarget, options = {}) {

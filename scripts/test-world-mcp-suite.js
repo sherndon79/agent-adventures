@@ -157,7 +157,7 @@ class MCPTestSuite {
     // Place USD asset (at origin for easy reference)
     await this.runTest('WorldBuilder Place Asset', async () => {
       const assetPath = '/home/sherndon/agent-adventures/assets/demo/Mugs/SM_Mug_A2.usd';
-      await client.placeAsset('test_mug', assetPath, [0, 0, 0.5], [0, 0, 0], [1, 1, 1]);
+      await client.placeAsset('test_mug', assetPath, [0, 0, 0.5], [0, 0, 0], [0.1, 0.1, 0.1]);
     }, 'worldbuilder');
 
     // Create batch: Mini Castle (well spaced from individual objects)
@@ -396,6 +396,127 @@ class MCPTestSuite {
       }
     }, 'worldviewer');
 
+    // Test advanced camera shots with waypoints
+    await this.runTest('WorldViewer Camera Shot Queue Tests', async () => {
+      // Clear existing queue first
+      try {
+        await client.stopQueue();
+      } catch (error) {
+        // Queue might be empty, that's ok
+      }
+
+      // Castle is located around [-6, 0, 0] area - focus shots on the castle
+      const castleCenter = [-6, 0, 1.8]; // Castle center at main keep position
+
+      // Shot 1: Smooth approach to castle from front-left
+      await client.smoothMove(
+        [-2, -8, 6],   // start_position: front-left elevated
+        [-3, -5, 4],   // end_position: closer to castle front
+        castleCenter,  // start_target: look at castle
+        castleCenter,  // end_target: keep looking at castle
+        {
+          duration: 3.0,
+          easingType: 'ease_in_out',
+          executionMode: 'auto'
+        }
+      );
+
+      // Shot 2: Arc shot sweeping around the castle
+      await client.arcShot(
+        [-2, 5, 8],    // start_position: back side elevated
+        [-10, -5, 6], // end_position: left side elevated
+        castleCenter,  // start_target: look at castle
+        castleCenter,  // end_target: keep looking at castle
+        {
+          duration: 4.0,
+          movementStyle: 'standard',
+          executionMode: 'auto'
+        }
+      );
+
+      // Shot 3: Simulated orbit around castle (180° rotation)
+      await client.arcShot(
+        [0, 0, 6],         // start_position: front of castle, elevated
+        [-12, 0, 6],       // end_position: back of castle (180° arc)
+        castleCenter,      // start_target: always look at castle
+        castleCenter,      // end_target: always look at castle
+        {
+          duration: 4.0,   // 4 seconds for half orbit
+          movementStyle: 'standard',
+          executionMode: 'auto'
+        }
+      );
+
+      // Shot 3b: Complete the orbit (another 180° rotation)
+      await client.arcShot(
+        [-12, 0, 6],       // start_position: back of castle
+        [0, 0, 6],         // end_position: front of castle (complete 360°)
+        castleCenter,      // start_target: always look at castle
+        castleCenter,      // end_target: always look at castle
+        {
+          duration: 4.0,   // 4 seconds for second half
+          movementStyle: 'standard',
+          executionMode: 'auto'
+        }
+      );
+
+      // Shot 4: Close-up smooth move focusing on castle details
+      await client.smoothMove(
+        [-10, 3, 3],   // start_position: left side view
+        [-3, -6, 2.5], // end_position: close front view
+        castleCenter,  // start_target: look at castle
+        [-6, 0, 1],    // end_target: focus on castle base
+        {
+          duration: 2.5,
+          easingType: 'ease_out',
+          executionMode: 'auto'
+        }
+      );
+
+      // Shot 5: Dramatic arc shot showcasing castle height
+      await client.arcShot(
+        [0, 8, 10],    // start_position: high and far from right
+        [-12, -8, 2], // end_position: low and close from left
+        [-6, 0, 3.2],  // start_target: look at castle top (main keep roof)
+        [-6, 0, 0.5],  // end_target: look at castle base
+        {
+          duration: 3.5,
+          movementStyle: 'dramatic',
+          executionMode: 'auto'
+        }
+      );
+
+      // First, use orbit camera to frame the shot
+      await client.orbitCamera(castleCenter, 15.0, 25.0, 0.0);
+
+      // Test orbit shot with base → flag transition during 1.5 rotations
+      const castleBase = [-6, 0, 0.5];   // Castle base level
+      const castleFlag = [-5.7, 0, 4.1]; // Flag at top (from castle elements)
+      const previousShotEndPosition = [-12, -8, 2]; // Where the dramatic arc shot ends
+
+      await client.orbitShot(
+        castleCenter,    // center: orbit around castle center
+        12.0,           // distance: orbital radius
+        0.0,            // start_azimuth: start from front
+        360.0,          // end_azimuth: full circle
+        20.0,           // elevation: slightly elevated view
+        8.0,            // duration: 8 seconds for full orbit
+        {
+          startPosition: previousShotEndPosition, // Start from previous shot's end
+          orbitCount: 1.5,           // 1.5 full rotations
+          startTarget: castleBase,   // start focused on castle base
+          endTarget: castleFlag,     // end focused on flag at top
+          executionMode: 'auto'
+        }
+      );
+
+      // Get queue status to verify all shots were added
+      const queueStatus = await client.getQueueStatus();
+      if (this.options.verbose) {
+        console.log('Camera queue status:', JSON.stringify(queueStatus, null, 2));
+      }
+    }, 'worldviewer');
+
     if (client) {
       await client.disconnect();
     }
@@ -440,6 +561,75 @@ class MCPTestSuite {
     // List waypoints by type
     await this.runTest('WorldSurveyor List Waypoints by Type', async () => {
       await client.listWaypoints('camera_position');
+    }, 'worldsurveyor');
+
+    // Test waypoint clearing and creation for camera shot transitions
+    await this.runTest('WorldSurveyor Camera Shot Waypoints', async () => {
+      // Clear existing waypoints first
+      try {
+        const existingWaypoints = await client.listWaypoints();
+        if (existingWaypoints?.result?.waypoints?.length > 0) {
+          // Note: WorldSurveyor doesn't have a clear all waypoints method
+          // So we'll just create new waypoints for shot transitions
+          console.log('Found existing waypoints, creating additional shot waypoints');
+        }
+      } catch (error) {
+        // Continue if we can't list waypoints
+      }
+
+      // Create waypoints for shot beginning and end positions
+      // These match the positions used in WorldViewer camera shot tests
+
+      // Waypoint for smooth move shot beginning
+      await client.createWaypoint(
+        [10, -15, 8],         // position
+        'camera_position',    // waypoint_type
+        'smooth_shot_start',  // name
+        [0, 0, 2],           // target
+        { shotType: 'smooth_move', phase: 'start' } // metadata
+      );
+
+      // Waypoint for smooth move shot end
+      await client.createWaypoint(
+        [5, 10, 12],          // position
+        'camera_position',    // waypoint_type
+        'smooth_shot_end',    // name
+        [2, 2, 1],           // target
+        { shotType: 'smooth_move', phase: 'end' } // metadata
+      );
+
+      // Waypoint for arc shot beginning
+      await client.createWaypoint(
+        [15, 5, 10],          // position
+        'camera_position',    // waypoint_type
+        'arc_shot_start',     // name
+        [0, 0, 1.5],         // target
+        { shotType: 'arc_shot', phase: 'start' } // metadata
+      );
+
+      // Waypoint for arc shot end
+      await client.createWaypoint(
+        [-10, -5, 8],         // position
+        'camera_position',    // waypoint_type
+        'arc_shot_end',       // name
+        [0, 0, 1.5],         // target
+        { shotType: 'arc_shot', phase: 'end' } // metadata
+      );
+
+      // Waypoint for orbit shot center
+      await client.createWaypoint(
+        [0, 0, 2],            // position
+        'point_of_interest',  // waypoint_type
+        'orbit_center',       // name
+        null,                 // target (not needed for center point)
+        { shotType: 'orbit', phase: 'center', radius: 12, elevation: 25, azimuth: 90 } // metadata
+      );
+
+      // Verify waypoints were created
+      const shotWaypoints = await client.listWaypoints('camera_position');
+      if (this.options.verbose) {
+        console.log('Created camera shot waypoints:', JSON.stringify(shotWaypoints, null, 2));
+      }
     }, 'worldsurveyor');
 
     if (client) {
@@ -570,23 +760,61 @@ class MCPTestSuite {
   async cleanScene() {
     this.log('🧹 Cleaning Isaac Sim scene...', COLORS.YELLOW);
 
-    let client;
+    let builderClient, surveyorClient;
     try {
-      client = new WorldBuilderClient({ enableLogging: this.options.verbose });
-      await client.initialize();
+      // Clear WorldBuilder scene
+      builderClient = new WorldBuilderClient({ enableLogging: this.options.verbose });
+      await builderClient.initialize();
+      await builderClient.clearScene('/World', true);
 
-      await client.clearScene('/World', true);
+      // Clear WorldSurveyor waypoints
+      try {
+        surveyorClient = new WorldSurveyorClient({ enableLogging: this.options.verbose });
+        await surveyorClient.initialize();
+
+        // Get all waypoints to see how many we're clearing
+        const waypoints = await surveyorClient.listWaypoints();
+        if (this.options.verbose) {
+          console.log('Raw waypoints response:', JSON.stringify(waypoints, null, 2));
+        }
+
+        // Parse waypoint count from the text response
+        let waypointCount = 0;
+        if (waypoints?.result?.structuredContent?.result) {
+          const resultText = waypoints.result.structuredContent.result;
+          const match = resultText.match(/Found (\d+) waypoint\(s\)/);
+          waypointCount = match ? parseInt(match[1]) : 0;
+        }
+        if (waypointCount > 0) {
+          this.log(`🗺️  Found ${waypointCount} waypoints, clearing them...`, COLORS.YELLOW);
+
+          // Clear all waypoints with confirmation
+          const clearResult = await surveyorClient.clearWaypoints(true);
+          if (this.options.verbose) {
+            console.log('Waypoint clear result:', JSON.stringify(clearResult, null, 2));
+          }
+        } else {
+          this.log('🗺️  No waypoints to clear', COLORS.YELLOW);
+        }
+      } catch (waypointError) {
+        // Waypoint clearing is optional, don't fail the whole clean operation
+        if (this.options.verbose) {
+          this.log(`⚠️  Could not clear waypoints: ${waypointError.message}`, COLORS.YELLOW);
+        }
+      }
+
       this.log('✅ Scene cleaned successfully', COLORS.GREEN);
 
-      if (client) {
-        await client.disconnect();
-      }
     } catch (error) {
       this.log(`❌ Failed to clean scene: ${error.message}`, COLORS.RED);
-      if (client) {
-        await client.disconnect();
-      }
       throw error;
+    } finally {
+      if (builderClient) {
+        await builderClient.disconnect();
+      }
+      if (surveyorClient) {
+        await surveyorClient.disconnect();
+      }
     }
   }
 
