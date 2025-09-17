@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent Adventures - Control Dashboard</title>
+    <link rel="stylesheet" href="css/dashboard.css">
+    <link rel="stylesheet" href="css/components.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.5/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="dashboard-container">
+        <!-- Header -->
+        <header class="dashboard-header">
+            <div class="header-left">
+                <h1 class="dashboard-title">🤖 Agent Adventures</h1>
+                <span class="dashboard-subtitle">Interactive Streaming Control Center</span>
+            </div>
+            <div class="header-right">
+                <button class="btn btn-small" id="settings-toggle">⚙️ Settings</button>
+                <div class="connection-status" id="connection-status">
+                    <div class="status-indicator offline"></div>
+                    <span>Connecting...</span>
+                </div>
+                <div class="system-time" id="system-time"></div>
+            </div>
+        </header>
+
+        <!-- Main Content Grid -->
+        <div class="dashboard-grid">
+            <!-- Stream Viewer (Top Left) -->
+            <section class="panel stream-panel">
+                <div class="panel-header">
+                    <h2 class="panel-title">📺 Live Stream</h2>
+                    <div class="stream-controls">
+                        <button class="btn btn-primary" id="start-stream">Start Stream</button>
+                        <button class="btn btn-secondary" id="stop-stream" disabled>Stop Stream</button>
+                    </div>
+                </div>
+                <div class="panel-content">
+                    <div class="stream-container">
+                        <div class="stream-player" id="stream-player">
+                            <div class="stream-placeholder">
+                                <div class="placeholder-icon">📺</div>
+                                <p>Isaac Sim Stream</p>
+                                <small>Stream will appear here when active</small>
+                            </div>
+                        </div>
+                        <div class="stream-info">
+                            <div class="stream-stats">
+                                <div class="stat">
+                                    <span class="stat-label">Quality:</span>
+                                    <span class="stat-value" id="stream-quality">Not streaming</span>
+                                </div>
+                                <div class="stat">
+                                    <span class="stat-label">Latency:</span>
+                                    <span class="stat-value" id="stream-latency">-- ms</span>
+                                </div>
+                                <div class="stat">
+                                    <span class="stat-label">Viewers:</span>
+                                    <span class="stat-value" id="viewer-count">0</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Agent Competition (Top Right) -->
+            <section class="panel agents-panel">
+                <div class="panel-header">
+                    <h2 class="panel-title">🤖 Agent Competition</h2>
+                    <div class="competition-controls">
+                        <button class="btn btn-success" id="start-competition">Start Competition</button>
+                        <select class="select" id="competition-type">
+                            <option value="asset_placement">Asset Placement</option>
+                            <option value="camera_move">Camera Movement</option>
+                            <option value="story_advance">Story Advance</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="panel-content">
+                    <div class="agent-cards">
+                        <div class="agent-card claude" id="claude-agent">
+                            <div class="agent-header">
+                                <div class="agent-icon">🧠</div>
+                                <div class="agent-info">
+                                    <h3>Claude</h3>
+                                    <span class="agent-specialty">Spatial Reasoning</span>
+                                </div>
+                                <div class="agent-status inactive" id="claude-status">●</div>
+                            </div>
+                            <div class="agent-stats">
+                                <div class="stat">
+                                    <span class="stat-label">Win Rate:</span>
+                                    <span class="stat-value" id="claude-winrate">0%</span>
+                                </div>
+                                <div class="stat">
+                                    <span class="stat-label">Proposals:</span>
+                                    <span class="stat-value" id="claude-proposals">0</span>
+                                </div>
+                            </div>
+                            <div class="agent-proposal" id="claude-proposal" style="display: none;">
+                                <div class="proposal-content"></div>
+                            </div>
+                        </div>
+
+                        <div class="agent-card gemini" id="gemini-agent">
+                            <div class="agent-header">
+                                <div class="agent-icon">💎</div>
+                                <div class="agent-info">
+                                    <h3>Gemini</h3>
+                                    <span class="agent-specialty">Visual Composition</span>
+                                </div>
+                                <div class="agent-status inactive" id="gemini-status">●</div>
+                            </div>
+                            <div class="agent-stats">
+                                <div class="stat">
+                                    <span class="stat-label">Win Rate:</span>
+                                    <span class="stat-value" id="gemini-winrate">0%</span>
+                                </div>
+                                <div class="stat">
+                                    <span class="stat-label">Proposals:</span>
+                                    <span class="stat-value" id="gemini-proposals">0</span>
+                                </div>
+                            </div>
+                            <div class="agent-proposal" id="gemini-proposal" style="display: none;">
+                                <div class="proposal-content"></div>
+                            </div>
+                        </div>
+
+                        <div class="agent-card gpt" id="gpt-agent">
+                            <div class="agent-header">
+                                <div class="agent-icon">🤖</div>
+                                <div class="agent-info">
+                                    <h3>GPT</h3>
+                                    <span class="agent-specialty">Balanced Optimization</span>
+                                </div>
+                                <div class="agent-status inactive" id="gpt-status">●</div>
+                            </div>
+                            <div class="agent-stats">
+                                <div class="stat">
+                                    <span class="stat-label">Win Rate:</span>
+                                    <span class="stat-value" id="gpt-winrate">0%</span>
+                                </div>
+                                <div class="stat">
+                                    <span class="stat-label">Proposals:</span>
+                                    <span class="stat-value" id="gpt-proposals">0</span>
+                                </div>
+                            </div>
+                            <div class="agent-proposal" id="gpt-proposal" style="display: none;">
+                                <div class="proposal-content"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="judge-panel" id="judge-panel" style="display: none;">
+                        <h4>⚖️ Judge Panel Decision</h4>
+                        <div class="judge-decision" id="judge-decision"></div>
+                        <div class="judge-reasoning" id="judge-reasoning"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Token Usage & Metrics (Middle Left) -->
+            <section class="panel metrics-panel">
+                <div class="panel-header">
+                    <h2 class="panel-title">📊 Token Usage & Metrics</h2>
+                    <div class="metrics-controls">
+                        <button class="btn btn-small" id="reset-metrics">Reset</button>
+                        <select class="select select-small" id="metrics-timeframe">
+                            <option value="1h">Last Hour</option>
+                            <option value="6h">Last 6 Hours</option>
+                            <option value="24h">Last 24 Hours</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="panel-content">
+                    <div class="metrics-grid">
+                        <div class="metric-card">
+                            <div class="metric-header">
+                                <span class="metric-title">Total Tokens</span>
+                                <span class="metric-icon">🔤</span>
+                            </div>
+                            <div class="metric-value" id="total-tokens">0</div>
+                            <div class="metric-change">+0 today</div>
+                        </div>
+
+                        <div class="metric-card">
+                            <div class="metric-header">
+                                <span class="metric-title">Estimated Cost</span>
+                                <span class="metric-icon">💰</span>
+                            </div>
+                            <div class="metric-value" id="estimated-cost">$0.00</div>
+                            <div class="metric-change">+$0.00 today</div>
+                        </div>
+
+                        <div class="metric-card">
+                            <div class="metric-header">
+                                <span class="metric-title">Competitions</span>
+                                <span class="metric-icon">🏆</span>
+                            </div>
+                            <div class="metric-value" id="total-competitions">0</div>
+                            <div class="metric-change">+0 today</div>
+                        </div>
+
+                        <div class="metric-card">
+                            <div class="metric-header">
+                                <span class="metric-title">Avg Response</span>
+                                <span class="metric-icon">⚡</span>
+                            </div>
+                            <div class="metric-value" id="avg-response-time">0ms</div>
+                            <div class="metric-change">-0ms vs yesterday</div>
+                        </div>
+                    </div>
+
+                    <div class="chart-container">
+                        <canvas id="token-usage-chart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <!-- System Health (Middle Right) -->
+            <section class="panel health-panel">
+                <div class="panel-header">
+                    <h2 class="panel-title">🏥 System Health</h2>
+                    <div class="health-indicator" id="overall-health">
+                        <div class="health-status healthy"></div>
+                        <span>All Systems Healthy</span>
+                    </div>
+                </div>
+                <div class="panel-content">
+                    <div class="health-services">
+                        <div class="service-status" id="isaac-sim-status">
+                            <div class="service-icon">🎮</div>
+                            <div class="service-info">
+                                <span class="service-name">Isaac Sim</span>
+                                <span class="service-detail">Not connected (Mock Mode)</span>
+                            </div>
+                            <div class="service-indicator unknown"></div>
+                        </div>
+
+                        <div class="service-status" id="event-bus-status">
+                            <div class="service-icon">📡</div>
+                            <div class="service-info">
+                                <span class="service-name">Event Bus</span>
+                                <span class="service-detail">Active</span>
+                            </div>
+                            <div class="service-indicator healthy"></div>
+                        </div>
+
+                        <div class="service-status" id="agents-status">
+                            <div class="service-icon">🤖</div>
+                            <div class="service-info">
+                                <span class="service-name">Agents</span>
+                                <span class="service-detail">0/3 running</span>
+                            </div>
+                            <div class="service-indicator inactive"></div>
+                        </div>
+
+                        <div class="service-status" id="streaming-status">
+                            <div class="service-icon">📺</div>
+                            <div class="service-info">
+                                <span class="service-name">Streaming</span>
+                                <span class="service-detail">Not streaming</span>
+                            </div>
+                            <div class="service-indicator inactive"></div>
+                        </div>
+                    </div>
+
+                    <div class="performance-metrics">
+                        <div class="perf-metric">
+                            <span class="perf-label">CPU Usage:</span>
+                            <div class="perf-bar">
+                                <div class="perf-fill" id="cpu-usage" style="width: 0%"></div>
+                            </div>
+                            <span class="perf-value" id="cpu-value">0%</span>
+                        </div>
+
+                        <div class="perf-metric">
+                            <span class="perf-label">Memory:</span>
+                            <div class="perf-bar">
+                                <div class="perf-fill" id="memory-usage" style="width: 0%"></div>
+                            </div>
+                            <span class="perf-value" id="memory-value">0 MB</span>
+                        </div>
+
+                        <div class="perf-metric">
+                            <span class="perf-label">Event Queue:</span>
+                            <div class="perf-bar">
+                                <div class="perf-fill" id="queue-usage" style="width: 0%"></div>
+                            </div>
+                            <span class="perf-value" id="queue-value">0</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Activity Log (Bottom) -->
+            <section class="panel log-panel">
+                <div class="panel-header">
+                    <h2 class="panel-title">📋 Activity Log</h2>
+                    <div class="log-controls">
+                        <button class="btn btn-small" id="clear-log">Clear</button>
+                        <select class="select select-small" id="log-level">
+                            <option value="all">All Events</option>
+                            <option value="competitions">Competitions</option>
+                            <option value="agents">Agent Activity</option>
+                            <option value="system">System Events</option>
+                            <option value="errors">Errors Only</option>
+                        </select>
+                        <label class="checkbox">
+                            <input type="checkbox" id="auto-scroll" checked>
+                            Auto-scroll
+                        </label>
+                    </div>
+                </div>
+                <div class="panel-content">
+                    <div class="activity-log" id="activity-log">
+                        <div class="log-entry system">
+                            <span class="log-time">--:--:--</span>
+                            <span class="log-source">SYSTEM</span>
+                            <span class="log-message">Dashboard initialized. Waiting for backend connection...</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <!-- Settings Modal -->
+    <div class="settings-overlay" id="settings-overlay" style="display: none;">
+        <div class="settings-modal">
+            <div class="settings-header">
+                <h3>⚙️ Service Configuration</h3>
+                <button class="close-btn" id="close-settings">✕</button>
+            </div>
+            <div class="settings-content">
+                <div class="settings-section">
+                    <h4>🤖 LLM APIs</h4>
+                    <div class="setting-item">
+                        <label class="setting-label">
+                            <input type="checkbox" id="toggle-llm-apis" checked>
+                            <span class="checkmark"></span>
+                            Use Real LLM APIs (Claude, GPT, Gemini)
+                        </label>
+                        <small class="setting-description">When disabled, uses mock agent proposals</small>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h4>🎮 Isaac Sim MCP</h4>
+                    <div class="setting-item">
+                        <label class="setting-label">
+                            <input type="checkbox" id="toggle-mcp-calls" checked>
+                            <span class="checkmark"></span>
+                            Use Real MCP Calls to Isaac Sim
+                        </label>
+                        <small class="setting-description">When disabled, simulates asset placement</small>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h4>📺 Streaming</h4>
+                    <div class="setting-item">
+                        <label class="setting-label">
+                            <input type="checkbox" id="toggle-streaming" checked>
+                            <span class="checkmark"></span>
+                            Use Real Streaming Services
+                        </label>
+                        <small class="setting-description">When disabled, mocks stream status</small>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h4>⚖️ Judge Panel</h4>
+                    <div class="setting-item">
+                        <label class="setting-label">
+                            <input type="checkbox" id="toggle-judge-panel" checked>
+                            <span class="checkmark"></span>
+                            Use AI Judge Panel
+                        </label>
+                        <small class="setting-description">When disabled, uses random winner selection</small>
+                    </div>
+                </div>
+
+                <div class="settings-actions">
+                    <button class="btn btn-primary" id="apply-settings">Apply Settings</button>
+                    <button class="btn btn-secondary" id="reset-settings">Reset to Defaults</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="js/dashboard-core.js"></script>
+    <script src="js/stream-viewer.js"></script>
+    <script src="js/agent-competition.js"></script>
+    <script src="js/metrics-tracker.js"></script>
+    <script src="js/system-health.js"></script>
+    <script src="js/activity-log.js"></script>
+</body>
+</html>

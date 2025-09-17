@@ -1,0 +1,59 @@
+{
+  "name": "scene-agent",
+  "version": "1.0.0",
+  "description": "Multi-LLM Scene Agent for 3D asset placement and environment design",
+  "main": "index.js",
+  "agentType": "scene",
+  "dependencies": {
+    "core": "^1.0.0",
+    "mcp-clients": "^1.0.0"
+  },
+  "config": {
+    "schema": "config.schema.json",
+    "default": {
+      "maxProposalsPerBatch": 3,
+      "spatialQueryRadius": 5.0,
+      "minObjectSeparation": 1.0,
+      "enableCollisionAvoidance": true,
+      "preferredAssetTypes": ["cube", "sphere", "cylinder"],
+      "healthCheckInterval": 30000,
+      "proposalTimeout": 8000
+    }
+  },
+  "events": {
+    "subscribes": [
+      "proposal:request",
+      "story:scene_change_required",
+      "audience:environment_request"
+    ],
+    "emits": [
+      "scene:asset_placed",
+      "scene:placement_failed",
+      "scene:spatial_query_complete"
+    ]
+  },
+  "capabilities": [
+    "3d_asset_placement",
+    "spatial_reasoning",
+    "collision_avoidance",
+    "isaac_sim_integration",
+    "multi_llm_competition"
+  ],
+  "llm_models": [
+    {
+      "model": "claude",
+      "specialty": "spatial_reasoning_narrative",
+      "systemPrompt": "scene-agent-claude.prompt"
+    },
+    {
+      "model": "gemini",
+      "specialty": "visual_composition_bold",
+      "systemPrompt": "scene-agent-gemini.prompt"
+    },
+    {
+      "model": "gpt",
+      "specialty": "balanced_engagement",
+      "systemPrompt": "scene-agent-gpt.prompt"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "screenshot_file": "isaac_sim_20250915_225151.png",
+  "timestamp": "2025-09-15T22:51:52.041665",
+  "file_size_bytes": 386729,
+  "purpose": "Check Isaac Sim after mock competition started",
+  "tags": [
+    "mock-competition",
+    "isaac-sim"
+  ],
+  "notes": null,
+  "tool_used": "screenshot_isaac_sim"
+}

@@ -1,0 +1,12 @@
+{
+  "screenshot_file": "isaac_sim_20250915_225040.png",
+  "timestamp": "2025-09-15T22:50:40.939167",
+  "file_size_bytes": 386708,
+  "purpose": "Check current Isaac Sim scene state before testing",
+  "tags": [
+    "baseline",
+    "isaac-sim"
+  ],
+  "notes": null,
+  "tool_used": "screenshot_isaac_sim"
+}

@@ -28,8 +28,7 @@ if shared_path not in sys.path:
 from logging_setup import setup_logging
 from mcp_base_client import MCPBaseClient
 
-# Import types for FastMCP compatibility
-import mcp.types as types
+# Import types for FastMCP compatibility - removed as no longer needed
 
 logger = logging.getLogger("worldviewer-server")
 
@@ -151,15 +150,22 @@ class CameraResponseFormatter:
             if response.get('stopped_count', 0) > 1:
                 message += f"\n📊 Total Stopped: {response['stopped_count']} movements"
         elif operation == 'health_check':
-            # Update for standardized health format
-            message = "✅ WorldViewer Health\n"
-            message += f"• Service: {response.get('service', 'Agent WorldViewer API')}\n"
-            message += f"• Version: {response.get('version', '1.0.0')}\n"
-            message += f"• URL: {response.get('url', 'Unknown')}\n"
-            message += f"• Timestamp: {response.get('timestamp', 'unknown')}\n"
-            # Add extension-specific status
+            # Standardized health format with explicit status
+            status_ok = bool(response.get('success', True))
+            status_text = "Healthy" if status_ok else "Unhealthy"
+            icon = "✅" if status_ok else "❌"
+            message = f"{icon} WorldViewer Health\n\n"
+            message += f"**Service:** {response.get('service', 'Agent WorldViewer API')}\n"
+            message += f"**Version:** {response.get('version', '1.0.0')}\n"
+            message += f"**Status:** {status_text}\n"
+            message += f"**URL:** {response.get('url', 'Unknown')}\n"
+            message += f"**Timestamp:** {response.get('timestamp', 'unknown')}\n"
+            # Add extension-specific detail
             camera_position = response.get('camera_position', [0.0, 0.0, 0.0])
-            message += f"• Camera Position: [{camera_position[0]:.2f}, {camera_position[1]:.2f}, {camera_position[2]:.2f}]"
+            message += (
+                f"**Camera Position:** "
+                f"[{camera_position[0]:.2f}, {camera_position[1]:.2f}, {camera_position[2]:.2f}]"
+            )
         
         return message
     
@@ -241,20 +247,29 @@ class WorldViewerMCP:
 
         # Response formatter
         self.formatter = CameraResponseFormatter()
-    
-async def _initialize_client(self):
+
+    async def _initialize_client(self):
         """Initialize the unified auth client"""
         if not self.client._initialized:
-            await worldviewer_server.client.initialize()
-    
-async def __aenter__(self):
+            await self.client.initialize()
+
+    async def __aenter__(self):
         """Async context manager entry"""
-        await worldviewer_server._initialize_client()
+        await self._initialize_client()
         return self
-    
-async def __aexit__(self, exc_type, exc_val, exc_tb):
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit"""
-        await worldviewer_server.client.close()
+        await self.client.close()
+
+    def _get_timeout(self, operation_type: str = 'standard') -> float:
+        """Uniform timeout helper to match other services."""
+        defaults = {
+            'simple': 5.0,      # health, small GETs
+            'standard': 10.0,   # typical POST/GET
+            'complex': 20.0,    # heavy operations
+        }
+        return defaults.get(operation_type, defaults['standard'])
 
 # Initialize server instance
 worldviewer_server = WorldViewerMCP()
@@ -274,12 +289,12 @@ async def worldviewer_set_camera_position(
         up_vector: Optional up vector as [x, y, z] (exactly 3 items required)
     """
     await worldviewer_server._initialize_client()
-    result = await worldviewer_server._set_camera_position({
+    result = await _set_camera_position({
         "position": position,
         "target": target,
         "up_vector": up_vector
     })
-    return result[0].text
+    return result
 
 @mcp.tool()
 async def worldviewer_frame_object(
@@ -293,11 +308,11 @@ async def worldviewer_frame_object(
         distance: Optional distance from object (auto-calculated if not provided)
     """
     await worldviewer_server._initialize_client()
-    result = await worldviewer_server._frame_object({
+    result = await _frame_object({
         "object_path": object_path,
         "distance": distance
     })
-    return result[0].text
+    return result
 
 @mcp.tool()
 async def worldviewer_orbit_camera(
@@ -315,20 +330,20 @@ async def worldviewer_orbit_camera(
         azimuth: Azimuth angle in degrees (0 = front, 90 = right)
     """
     await worldviewer_server._initialize_client()
-    result = await worldviewer_server._orbit_camera({
+    result = await _orbit_camera({
         "center": center,
         "distance": distance,
         "elevation": elevation,
         "azimuth": azimuth
     })
-    return result[0].text
+    return result
 
 @mcp.tool()
 async def worldviewer_get_camera_status() -> str:
     """Get current camera status and position."""
     await worldviewer_server._initialize_client()
-    result = await worldviewer_server._get_camera_status({})
-    return result[0].text
+    result = await _get_camera_status({})
+    return result
 
 @mcp.tool()
 async def worldviewer_get_asset_transform(
@@ -342,18 +357,18 @@ async def worldviewer_get_asset_transform(
         calculation_mode: How to calculate position for complex assets (auto, center, pivot, bounds)
     """
     await worldviewer_server._initialize_client()
-    result = await worldviewer_server._get_asset_transform({
+    result = await _get_asset_transform({
         "usd_path": usd_path,
         "calculation_mode": calculation_mode
     })
-    return result[0].text
+    return result
 
 @mcp.tool()
-async def worldviewer_extension_health() -> str:
+async def worldviewer_health_check() -> str:
     """Check Agent WorldViewer extension health and API status."""
     await worldviewer_server._initialize_client()
-    result = await worldviewer_server._extension_health({})
-    return result[0].text
+    result = await _health_check({})
+    return result
 
 @mcp.tool()
 async def worldviewer_smooth_move(
@@ -383,7 +398,7 @@ async def worldviewer_smooth_move(
         execution_mode: Execution mode (auto or manual)
     """
     await worldviewer_server._initialize_client()
-    result = await worldviewer_server._smooth_move({
+    result = await _smooth_move({
         "start_position": start_position,
         "end_position": end_position,
         "start_target": start_target,
@@ -395,7 +410,7 @@ async def worldviewer_smooth_move(
         "easing_type": easing_type,
         "execution_mode": execution_mode
     })
-    return result[0].text
+    return result
 
 @mcp.tool()
 async def worldviewer_arc_shot(
@@ -431,14 +446,14 @@ async def worldviewer_arc_shot(
         "movement_style": movement_style,
         "execution_mode": execution_mode
     })
-    return result[0].text
+    return result
 
 @mcp.tool()
 async def worldviewer_stop_movement() -> str:
     """Stop an active cinematic movement."""
     await worldviewer_server._initialize_client()
-    result = await worldviewer_server._stop_movement({})
-    return result[0].text
+    result = await _stop_movement({})
+    return result
 
 @mcp.tool()
 async def worldviewer_movement_status(movement_id: str) -> str:
@@ -448,8 +463,8 @@ async def worldviewer_movement_status(movement_id: str) -> str:
         movement_id: ID of the movement to check
     """
     await worldviewer_server._initialize_client()
-    result = await worldviewer_server._movement_status({"movement_id": movement_id})
-    return result[0].text
+    result = await _movement_status({"movement_id": movement_id})
+    return result
 
 @mcp.tool()
 async def worldviewer_get_metrics(format: str = "json") -> str:
@@ -459,72 +474,76 @@ async def worldviewer_get_metrics(format: str = "json") -> str:
         format: Output format (json or prom)
     """
     await worldviewer_server._initialize_client()
-    result = await worldviewer_server._get_metrics({"format": format})
-    return result[0].text
+    result = await _get_metrics({"format": format})
+    return result
 
 @mcp.tool()
 async def worldviewer_metrics_prometheus() -> str:
     """Get WorldViewer metrics in Prometheus format for monitoring systems."""
     await worldviewer_server._initialize_client()
-    result = await worldviewer_server._metrics_prometheus({})
-    return result[0].text
+    result = await _metrics_prometheus({})
+    return result
 
 @mcp.tool()
 async def worldviewer_get_queue_status() -> str:
     """Get comprehensive shot queue status with timing information and queue state."""
     await worldviewer_server._initialize_client()
-    result = await worldviewer_server._get_queue_status({})
-    return result[0].text
+    result = await _get_queue_status({})
+    return result
 
 @mcp.tool()
 async def worldviewer_play_queue() -> str:
     """Start/resume queue processing."""
     await worldviewer_server._initialize_client()
-    result = await worldviewer_server._play_queue({})
-    return result[0].text
+    result = await _play_queue({})
+    return result
 
 @mcp.tool()
 async def worldviewer_pause_queue() -> str:
     """Pause queue processing (current movement continues, no new movements start)."""
     await worldviewer_server._initialize_client()
-    result = await worldviewer_server._pause_queue({})
-    return result[0].text
+    result = await _pause_queue({})
+    return result
 
 @mcp.tool()
 async def worldviewer_stop_queue() -> str:
     """Stop and clear entire queue."""
     await worldviewer_server._initialize_client()
-    result = await worldviewer_server._stop_queue({})
-    return result[0].text
+    result = await _stop_queue({})
+    return result
 
 async def execute_camera_operation(operation: str, method: str, endpoint: str,
-                                   data: Optional[Dict] = None, **template_vars) -> List[types.TextContent]:
+                                   data: Optional[Dict] = None, **template_vars) -> str:
     """Unified camera operation execution with consistent response formatting"""
     try:
         await worldviewer_server._initialize_client()
 
         if method.upper() == "GET":
-            response = await worldviewer_server.client.get(endpoint)
+            response = await worldviewer_server.client.get(
+                endpoint, timeout=worldviewer_server._get_timeout('simple')
+            )
         elif method.upper() == "POST":
-            response = await worldviewer_server.client.post(endpoint, json=data)
+            response = await worldviewer_server.client.post(
+                endpoint, json=data, timeout=worldviewer_server._get_timeout('standard')
+            )
         else:
             raise ValueError(f"Unsupported method: {method}")
 
         if response.get("success"):
             message = worldviewer_server.formatter.format_success(operation, response, **template_vars)
-            return [types.TextContent(type="text", text=message)]
+            return message
         else:
             error_message = worldviewer_server.formatter.format_error(operation, response.get('error', 'Unknown error'))
-            return [types.TextContent(type="text", text=error_message)]
+            return error_message
 
     except aiohttp.ClientError as e:
         error_message = worldviewer_server.formatter.format_error(operation, f"Connection error: {str(e)}")
-        return [types.TextContent(type="text", text=error_message)]
+        return error_message
     except Exception as e:
         error_message = worldviewer_server.formatter.format_error(operation, f"Execution error: {str(e)}")
-        return [types.TextContent(type="text", text=error_message)]
+        return error_message
     
-async def _set_camera_position(args: Dict[str, Any]) -> List[types.TextContent]:
+async def _set_camera_position(args: Dict[str, Any]) -> str:
     """Set camera position"""
 
     position = args.get("position")
@@ -548,7 +567,7 @@ async def _set_camera_position(args: Dict[str, Any]) -> List[types.TextContent]:
             if up_vector and (not isinstance(up_vector, list) or len(up_vector) != 3):
                 raise ValueError("up_vector must be an array of exactly 3 numbers")
     except ValueError as e:
-        return [types.TextContent(type="text", text=f"❌ Parameter validation error: {str(e)}")]
+        return f"❌ Parameter validation error: {str(e)}"
 
     request_data = {"position": position}
     if target:
@@ -561,7 +580,7 @@ async def _set_camera_position(args: Dict[str, Any]) -> List[types.TextContent]:
         request_data, position=position, target=target
     )
     
-async def _frame_object(args: Dict[str, Any]) -> List[types.TextContent]:
+async def _frame_object(args: Dict[str, Any]) -> str:
         """Frame object in viewport"""
         
         object_path = args.get("object_path")
@@ -576,7 +595,7 @@ async def _frame_object(args: Dict[str, Any]) -> List[types.TextContent]:
             request_data, object_path=object_path
         )
     
-async def _orbit_camera(args: Dict[str, Any]) -> List[types.TextContent]:
+async def _orbit_camera(args: Dict[str, Any]) -> str:
         """Position camera in orbit"""
         
         center = args.get("center")
@@ -592,7 +611,7 @@ async def _orbit_camera(args: Dict[str, Any]) -> List[types.TextContent]:
                 if not isinstance(center, list) or len(center) != 3:
                     raise ValueError("center must be an array of exactly 3 numbers")
         except ValueError as e:
-            return [types.TextContent(type="text", text=f"❌ Parameter validation error: {str(e)}")]
+            return f"❌ Parameter validation error: {str(e)}"
         
         request_data = {
             "center": center,
@@ -606,19 +625,19 @@ async def _orbit_camera(args: Dict[str, Any]) -> List[types.TextContent]:
             request_data, center=center, distance=distance, elevation=elevation, azimuth=azimuth
         )
     
-async def _get_camera_status(args: Dict[str, Any]) -> List[types.TextContent]:
+async def _get_camera_status(args: Dict[str, Any]) -> str:
         """Get camera status"""
         return await execute_camera_operation(
             "get_status", "GET", "/camera/status"
         )
     
-async def _get_asset_transform(args: Dict[str, Any]) -> List[types.TextContent]:
+async def _get_asset_transform(args: Dict[str, Any]) -> str:
         """Get asset transform information for camera operations"""
         usd_path = args.get("usd_path", "")
         calculation_mode = args.get("calculation_mode", "auto")
         
         if not usd_path:
-            return [types.TextContent(type="text", text="❌ Error: usd_path is required")]
+            return "❌ Error: usd_path is required"
         
         try:
             await worldviewer_server._initialize_client()
@@ -656,18 +675,18 @@ async def _get_asset_transform(args: Dict[str, Any]) -> List[types.TextContent]:
                         f"\n• Bounds Max: [{bounds_max[0]:.2f}, {bounds_max[1]:.2f}, {bounds_max[2]:.2f}]"
                     )
                 
-                return [types.TextContent(type="text", text=transform_text)]
+                return transform_text
             else:
                 error_msg = result.get('error', 'Unknown error')
-                return [types.TextContent(type="text", text=f"❌ Failed to get asset transform: {error_msg}")]
+                return f"❌ Failed to get asset transform: {error_msg}"
                     
         except aiohttp.ServerTimeoutError:
-            return [types.TextContent(type="text", text="❌ Request timed out - Isaac Sim may be busy")]
+            return "❌ Request timed out - Isaac Sim may be busy"
         except Exception as e:
-            return [types.TextContent(type="text", text=f"❌ Connection error: {str(e)}")]
+            return f"❌ Connection error: {str(e)}"
     
-async def _extension_health(args: Dict[str, Any]) -> List[types.TextContent]:
-        """Check extension health"""
+async def _health_check(args: Dict[str, Any]) -> str:
+        """Check extension health (standardized)."""
         return await execute_camera_operation(
             "health_check", "GET", "/health", status="healthy"
         )
@@ -676,7 +695,7 @@ async def _extension_health(args: Dict[str, Any]) -> List[types.TextContent]:
     # CINEMATIC MOVEMENT TOOL HANDLERS
     # =====================================================================
     
-async def _smooth_move(args: Dict[str, Any]) -> List[types.TextContent]:
+async def _smooth_move(args: Dict[str, Any]) -> str:
         """Execute smooth camera movement"""
         return await execute_camera_operation(
             "smooth_move", "POST", "/camera/smooth_move", args,
@@ -685,7 +704,7 @@ async def _smooth_move(args: Dict[str, Any]) -> List[types.TextContent]:
             duration=args.get("duration", 3.0)
         )
     
-async def _arc_shot(args: Dict[str, Any]) -> List[types.TextContent]:
+async def _arc_shot(args: Dict[str, Any]) -> str:
         """Execute arc shot cinematic movement with curved Bezier path"""
         return await execute_camera_operation(
             "arc_shot", "POST", "/camera/arc_shot", args,
@@ -696,25 +715,25 @@ async def _arc_shot(args: Dict[str, Any]) -> List[types.TextContent]:
             duration=args.get("duration", 6.0)
         )
     
-async def _stop_movement(args: Dict[str, Any]) -> List[types.TextContent]:
+async def _stop_movement(args: Dict[str, Any]) -> str:
         """Stop all active cinematic movements"""
         return await execute_camera_operation(
             "stop_movement", "POST", "/camera/stop_movement", {},
             description="Stopping all camera movements"
         )
     
-async def _movement_status(args: Dict[str, Any]) -> List[types.TextContent]:
+async def _movement_status(args: Dict[str, Any]) -> str:
         """Get status of a cinematic movement"""
         movement_id = args.get("movement_id")
         if not movement_id:
-            return [types.TextContent(type="text", text="❌ Movement ID is required")]
+            return "❌ Movement ID is required"
         
         return await execute_camera_operation(
             "movement_status", "GET", f"/camera/movement_status?movement_id={movement_id}", None,
             movement_id=movement_id
         )
     
-async def _get_metrics(args: Dict[str, Any]) -> List[types.TextContent]:
+async def _get_metrics(args: Dict[str, Any]) -> str:
         """Get performance metrics and statistics from WorldViewer extension"""
         format_type = args.get("format", "json")
         
@@ -726,48 +745,39 @@ async def _get_metrics(args: Dict[str, Any]) -> List[types.TextContent]:
                 await worldviewer_server._initialize_client()
                 response = await worldviewer_server.client.get("/metrics")
             
-            # Handle Prometheus format special response
+            # Handle Prometheus format using uniform _raw_text from shared client
             if format_type == "prom" and "_raw_text" in response:
                 prom_data = response["_raw_text"]
-                return [types.TextContent(type="text", text=f"📊 **WorldViewer Metrics (Prometheus)**\n```\n{prom_data}\n```")]
+                return f"📊 **WorldViewer Metrics (Prometheus)**\n```\n{prom_data}\n```"
             elif response.get("success"):
                 if format_type == "json":
                     metrics_json = json.dumps(response.get("metrics", {}), indent=2)
-                    return [types.TextContent(type="text", text=f"📊 **WorldViewer Metrics (JSON)**\n```json\n{metrics_json}\n```")]
+                    return f"📊 **WorldViewer Metrics (JSON)**\n```json\n{metrics_json}\n```"
                 elif format_type == "prom":
-                    prom_data = response.get("prometheus_metrics", "# No Prometheus metrics available")
-                    return [types.TextContent(type="text", text=f"📊 **WorldViewer Metrics (Prometheus)**\n```\n{prom_data}\n```")]
+                    prom_data = response.get("_raw_text", "# No Prometheus metrics available")
+                    return f"📊 **WorldViewer Metrics (Prometheus)**\n```\n{prom_data}\n```"
                 else:
-                    return [types.TextContent(type="text", text="❌ Error: format must be 'json' or 'prom'")]
+                    return "❌ Error: format must be 'json' or 'prom'"
             else:
                 error_msg = response.get('error', 'Unknown error')
-                return [types.TextContent(type="text", text=f"❌ Failed to get WorldViewer metrics: {error_msg}")]
+                return f"❌ Failed to get WorldViewer metrics: {error_msg}"
                 
         except Exception as e:
-            return [types.TextContent(type="text", text=f"❌ Error getting metrics: {str(e)}")]
+            return f"❌ Error getting metrics: {str(e)}"
     
-async def _metrics_prometheus(args: Dict[str, Any]) -> List[types.TextContent]:
+async def _metrics_prometheus(args: Dict[str, Any]) -> str:
         """Get WorldViewer metrics in Prometheus format."""
         try:
             await worldviewer_server._initialize_client()
             response = await worldviewer_server.client.get("/metrics.prom")
             
-            # For Prometheus format, check for _raw_text field first (special response format)
-            if "_raw_text" in response:
-                prom_data = response["_raw_text"]
-                return [types.TextContent(type="text", text=f"📊 **WorldViewer Prometheus Metrics**\n\n```\n{prom_data}\n```")]
-            elif response.get("success"):
-                # Fallback to prometheus_metrics field
-                prom_data = response.get("prometheus_metrics", "# No Prometheus metrics available")
-                return [types.TextContent(type="text", text=f"📊 **WorldViewer Prometheus Metrics**\n\n```\n{prom_data}\n```")]
-            else:
-                error_msg = response.get('error', 'Unknown error')
-                return [types.TextContent(type="text", text=f"❌ Failed to get Prometheus metrics: {error_msg}")]
+            prom_data = response.get("_raw_text", "# No Prometheus metrics available")
+            return f"📊 **WorldViewer Prometheus Metrics**\n\n```\n{prom_data}\n```"
                 
         except Exception as e:
-            return [types.TextContent(type="text", text=f"❌ Error getting Prometheus metrics: {str(e)}")]
+            return f"❌ Error getting Prometheus metrics: {str(e)}"
 
-async def _get_queue_status(args: Dict[str, Any]) -> List[types.TextContent]:
+async def _get_queue_status(args: Dict[str, Any]) -> str:
         """Get comprehensive shot queue status with timing information"""
         try:
             await worldviewer_server._initialize_client()
@@ -816,15 +826,15 @@ async def _get_queue_status(args: Dict[str, Any]) -> List[types.TextContent]:
                         duration = shot.get("estimated_duration", 0)
                         status_text += f"  {i}. {mov_id} ({operation}) - {duration:.1f}s\n"
                 
-                return [types.TextContent(type="text", text=status_text)]
+                return status_text
             else:
                 error_msg = response.get('error', 'Unknown error')
-                return [types.TextContent(type="text", text=f"❌ Failed to get queue status: {error_msg}")]
+                return f"❌ Failed to get queue status: {error_msg}"
                 
         except Exception as e:
-            return [types.TextContent(type="text", text=f"❌ Error getting queue status: {str(e)}")]
+            return f"❌ Error getting queue status: {str(e)}"
 
-async def _play_queue(args: Dict[str, Any]) -> List[types.TextContent]:
+async def _play_queue(args: Dict[str, Any]) -> str:
         """Start/resume queue processing"""
         try:
             await worldviewer_server._initialize_client()
@@ -836,15 +846,15 @@ async def _play_queue(args: Dict[str, Any]) -> List[types.TextContent]:
                 queued_count = response.get("queued_count", 0)
                 message = response.get("message", "Queue started")
                 
-                return [types.TextContent(type="text", text=f"▶️ **Queue Play**\n\n{message}\n\n**State:** {queue_state.title()}\n**Active:** {active_count} | **Queued:** {queued_count}")]
+                return f"▶️ **Queue Play**\n\n{message}\n\n**State:** {queue_state.title()}\n**Active:** {active_count} | **Queued:** {queued_count}"
             else:
                 error_msg = response.get('error', 'Unknown error')
-                return [types.TextContent(type="text", text=f"❌ Failed to play queue: {error_msg}")]
+                return f"❌ Failed to play queue: {error_msg}"
                 
         except Exception as e:
-            return [types.TextContent(type="text", text=f"❌ Error playing queue: {str(e)}")]
+            return f"❌ Error playing queue: {str(e)}"
 
-async def _pause_queue(args: Dict[str, Any]) -> List[types.TextContent]:
+async def _pause_queue(args: Dict[str, Any]) -> str:
         """Pause queue processing"""
         try:
             await worldviewer_server._initialize_client()
@@ -856,15 +866,15 @@ async def _pause_queue(args: Dict[str, Any]) -> List[types.TextContent]:
                 queued_count = response.get("queued_count", 0)
                 message = response.get("message", "Queue paused")
                 
-                return [types.TextContent(type="text", text=f"⏸️ **Queue Pause**\n\n{message}\n\n**State:** {queue_state.title()}\n**Active:** {active_count} | **Queued:** {queued_count}")]
+                return f"⏸️ **Queue Pause**\n\n{message}\n\n**State:** {queue_state.title()}\n**Active:** {active_count} | **Queued:** {queued_count}"
             else:
                 error_msg = response.get('error', 'Unknown error')
-                return [types.TextContent(type="text", text=f"❌ Failed to pause queue: {error_msg}")]
+                return f"❌ Failed to pause queue: {error_msg}"
                 
         except Exception as e:
-            return [types.TextContent(type="text", text=f"❌ Error pausing queue: {str(e)}")]
+            return f"❌ Error pausing queue: {str(e)}"
 
-async def _stop_queue(args: Dict[str, Any]) -> List[types.TextContent]:
+async def _stop_queue(args: Dict[str, Any]) -> str:
         """Stop and clear entire queue"""
         try:
             await worldviewer_server._initialize_client()
@@ -875,13 +885,13 @@ async def _stop_queue(args: Dict[str, Any]) -> List[types.TextContent]:
                 stopped_movements = response.get("stopped_movements", 0)
                 message = response.get("message", "Queue stopped")
                 
-                return [types.TextContent(type="text", text=f"⏹️ **Queue Stop**\n\n{message}\n\n**State:** {queue_state.title()}\n**Stopped Movements:** {stopped_movements}")]
+                return f"⏹️ **Queue Stop**\n\n{message}\n\n**State:** {queue_state.title()}\n**Stopped Movements:** {stopped_movements}"
             else:
                 error_msg = response.get('error', 'Unknown error')
-                return [types.TextContent(type="text", text=f"❌ Failed to stop queue: {error_msg}")]
+                return f"❌ Failed to stop queue: {error_msg}"
                 
         except Exception as e:
-            return [types.TextContent(type="text", text=f"❌ Error stopping queue: {str(e)}")]
+            return f"❌ Error stopping queue: {str(e)}"
     
 async def main():
     """Main entry point for the FastMCP server."""
@@ -893,7 +903,7 @@ async def main():
     port = int(os.getenv("MCP_SERVER_PORT", 8701))
 
     # Create the FastMCP ASGI application
-    app = mcp.create_app()
+    app = mcp.streamable_http_app
 
     logger.info(f"WorldViewer MCP Server starting on http://0.0.0.0:{port}")
     logger.info("Using modern FastMCP with Streamable HTTP transport")

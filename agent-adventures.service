@@ -1,0 +1,37 @@
+[Unit]
+Description=Agent Adventures Interactive Platform
+Documentation=https://github.com/sherndon/agent-adventures
+After=network.target network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sherndon
+Group=sherndon
+WorkingDirectory=/home/sherndon/agent-adventures
+Environment=NODE_ENV=production
+EnvironmentFile=/home/sherndon/agent-adventures/.env
+ExecStart=/usr/bin/node src/index.js
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=agent-adventures
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/sherndon/agent-adventures
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=32768
+
+[Install]
+WantedBy=multi-user.target

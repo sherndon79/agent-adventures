@@ -1,0 +1,48 @@
+{
+  "name": "agent-adventures",
+  "version": "0.1.0",
+  "description": "Interactive Adventure Platform - AI-powered choose-your-own-adventure streaming",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "test": "node --test tests/**/*.test.js",
+    "test:workflow": "node scripts/test-workflow.js",
+    "test:api": "node scripts/test-api-access.js",
+    "test:mcp": "node scripts/test-world-mcp-suite.js",
+    "test:config": "node -e \"import('./src/utils/config-validator.js').then(v => v.validateConfiguration())\"",
+    "test:apis": "node -e \"import('./src/utils/config-validator.js').then(v => v.testApiConnectivity())\"",
+    "config:summary": "node -e \"import('./src/utils/config-validator.js').then(v => console.log(JSON.stringify(v.getConfigurationSummary(), null, 2)))\"",
+    "lint": "eslint src/**/*.js",
+    "build": "echo 'Build step placeholder'",
+    "service:install": "scripts/install-service.sh",
+    "service:start": "scripts/manage-service.sh start",
+    "service:stop": "scripts/manage-service.sh stop",
+    "service:restart": "scripts/manage-service.sh restart",
+    "service:status": "scripts/manage-service.sh status",
+    "service:logs": "scripts/manage-service.sh logs",
+    "service:remove": "scripts/manage-service.sh remove"
+  },
+  "keywords": [
+    "ai",
+    "streaming",
+    "interactive",
+    "isaac-sim",
+    "agents"
+  ],
+  "author": "Seth Herndon <herndon.seth@gmail.com>",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.18.0",
+    "dotenv": "^17.2.2",
+    "eventemitter3": "^5.0.1",
+    "express": "^5.1.0",
+    "immer": "^10.0.3",
+    "uuid": "^9.0.1",
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "eslint": "^8.55.0"
+  }
+}
