@@ -432,29 +432,28 @@ class WorldSurveyorMCP:
     async def _set_selective_markers_visible(self, args: Dict[str, Any]) -> str:
         """Show only specific waypoints while hiding all others."""
         try:
-            visible_waypoint_ids = args.get('visible_waypoint_ids', [])
-            
-            if not isinstance(visible_waypoint_ids, list):
-                return ("❌ Error: visible_waypoint_ids must be an array"
+            waypoint_ids = args.get('visible_waypoint_ids') or args.get('waypoint_ids') or []
+
+            if not isinstance(waypoint_ids, list):
+                return ("❌ Error: waypoint_ids must be an array"
     )
-            
-            if len(visible_waypoint_ids) == 0:
+
+            if len(waypoint_ids) == 0:
                 return ("❌ Error: at least one waypoint ID must be provided"
     )
-            
+
             result = await self.client.post(
                 "/markers/selective",
-                json={"visible_waypoint_ids": visible_waypoint_ids},
+                json={"waypoint_ids": waypoint_ids},
                 timeout=10.0
             )
             # Response already parsed by MCPBaseClient
             
             if result.get('success'):
                 return (f"🎯 **Selective Visibility Activated**\n\n"
-                         f"• **Visible Waypoints:** {len(visible_waypoint_ids)}\n"
-                         f"• **Waypoint IDs:** {', '.join(visible_waypoint_ids[:5])}{'...' if len(visible_waypoint_ids) > 5 else ''}\n"
-                         f"• **Mode:** Selective visibility (all other waypoints hidden)\n"
-                         f"• **Status:** {result.get('message', 'Selective mode activated')}"
+                         f"• **Visible Waypoints:** {len(waypoint_ids)}\n"
+                         f"• **Waypoint IDs:** {', '.join(waypoint_ids[:5])}{'...' if len(waypoint_ids) > 5 else ''}\n"
+                         f"• **Mode:** Selective visibility (all other waypoints hidden)"
     )
             else:
                 return (f"❌ Failed to set selective visibility: {result.get('error', 'Unknown error')}"
@@ -1124,6 +1123,18 @@ async def worldsurveyor_metrics_prometheus() -> str:
         raise RuntimeError("WorldSurveyor server not initialized")
     await worldsurveyor_server._initialize_client()
     return await worldsurveyor_server._metrics_prometheus({})
+
+
+@mcp.tool()
+async def worldsurveyor_metrics(format: str = "json") -> str:
+    """Alias for worldsurveyor_get_metrics to maintain parity with stdio MCP."""
+    return await worldsurveyor_get_metrics(format=format)
+
+
+@mcp.tool()
+async def worldsurveyor_health() -> str:
+    """Alias for health check matching parity contract."""
+    return await worldsurveyor_health_check()
 
 @mcp.tool()
 async def worldsurveyor_clear_waypoints(confirm: bool = False) -> str:
