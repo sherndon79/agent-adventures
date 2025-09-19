@@ -34,7 +34,9 @@ def register_tools(mcp_instance: FastMCP):
     mcp_instance.tool()(groups.worldsurveyor_create_group)
     mcp_instance.tool()(groups.worldsurveyor_list_groups)
     mcp_instance.tool()(groups.worldsurveyor_get_group)
+    mcp_instance.tool()(groups.worldsurveyor_update_group)
     mcp_instance.tool()(groups.worldsurveyor_remove_group)
+    mcp_instance.tool()(groups.worldsurveyor_clear_groups)
     mcp_instance.tool()(groups.worldsurveyor_get_group_waypoints)
     mcp_instance.tool()(groups.worldsurveyor_add_waypoint_to_groups)
     mcp_instance.tool()(groups.worldsurveyor_remove_waypoint_from_groups)
@@ -69,7 +71,9 @@ def register_tools(mcp_instance: FastMCP):
         "worldsurveyor_create_group",
         "worldsurveyor_list_groups",
         "worldsurveyor_get_group",
+        "worldsurveyor_update_group",
         "worldsurveyor_remove_group",
+        "worldsurveyor_clear_groups",
         "worldsurveyor_get_group_waypoints",
         "worldsurveyor_add_waypoint_to_groups",
         "worldsurveyor_remove_waypoint_from_groups",

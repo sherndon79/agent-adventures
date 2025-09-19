@@ -73,6 +73,39 @@ async def worldsurveyor_get_group(group_id: str) -> Dict[str, Any]:
     return result
 
 
+async def worldsurveyor_update_group(
+    group_id: str,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    color: Optional[List[float]] = None,
+    parent_group_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """Update an existing waypoint group.
+
+    Args:
+        group_id: ID of the group to update
+        name: New name (optional)
+        description: New description (optional)
+        color: New color as [r, g, b] values (0-1) (optional)
+        parent_group_id: New parent group ID (optional)
+    """
+    client = get_client()
+
+    args = {"group_id": group_id}
+
+    if name is not None:
+        args["name"] = name
+    if description is not None:
+        args["description"] = description
+    if color is not None:
+        args["color"] = color
+    if parent_group_id is not None:
+        args["parent_group_id"] = parent_group_id
+
+    result = await client.request('groups/update', payload=args)
+    return result
+
+
 async def worldsurveyor_remove_group(
     group_id: str,
     recursive: bool = False
@@ -91,6 +124,19 @@ async def worldsurveyor_remove_group(
     }
 
     result = await client.request('groups/remove', payload=args)
+    return result
+
+
+async def worldsurveyor_clear_groups(confirm: bool = False) -> Dict[str, Any]:
+    """Clear all groups from the scene.
+
+    Args:
+        confirm: Confirmation flag for destructive operation
+    """
+    client = get_client()
+
+    args = {"confirm": confirm}
+    result = await client.request('groups/clear', payload=args)
     return result
 
 
