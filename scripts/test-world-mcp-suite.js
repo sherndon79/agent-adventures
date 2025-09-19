@@ -563,25 +563,51 @@ class MCPTestSuite {
       await client.listWaypoints('camera_position');
     }, 'worldsurveyor');
 
-    // Test waypoint clearing and creation for camera shot transitions
-    await this.runTest('WorldSurveyor Camera Shot Waypoints', async () => {
-      // Clear existing waypoints first
-      try {
-        const existingWaypoints = await client.listWaypoints();
-        if (existingWaypoints?.result?.waypoints?.length > 0) {
-          // Note: WorldSurveyor doesn't have a clear all waypoints method
-          // So we'll just create new waypoints for shot transitions
-          console.log('Found existing waypoints, creating additional shot waypoints');
-        }
-      } catch (error) {
-        // Continue if we can't list waypoints
+    // Test group creation and waypoint assignment
+    let testGroupId = null;
+    await this.runTest('WorldSurveyor Create Group', async () => {
+      const result = await client.createGroup(
+        'CameraShots',
+        'Test group for camera shot waypoints',
+        '#FF6B6B'
+      );
+      if (this.options.verbose) {
+        console.log('Group creation result:', JSON.stringify(result, null, 2));
       }
+
+      // Extract group ID from creation response for cleanup
+      if (result?.success && result.result?.structuredContent?.result) {
+        const resultText = result.result.structuredContent.result;
+        const match = resultText.match(/Group ID:\*\* ([^\s\n]+)/);
+        if (match) {
+          testGroupId = match[1];
+          if (this.options.verbose) {
+            console.log(`Extracted group ID for cleanup: ${testGroupId}`);
+          }
+        }
+      }
+    }, 'worldsurveyor');
+
+    // Test waypoint creation and group assignment
+    await this.runTest('WorldSurveyor Camera Shot Waypoints with Groups', async () => {
+      // Get the group ID - parse it from the group creation result
+      const groupsResult = await client.listGroups();
+      let cameraGroupId = null;
+
+      if (groupsResult?.success && groupsResult.result?.structuredContent?.result) {
+        const resultText = groupsResult.result.structuredContent.result;
+        const match = resultText.match(/CameraShots \(ID: ([^)]+)\)/);
+        cameraGroupId = match ? match[1] : null;
+      }
+
+      // Store waypoint IDs for group assignment
+      const waypointIds = [];
 
       // Create waypoints for shot beginning and end positions
       // These match the positions used in WorldViewer camera shot tests
 
       // Waypoint for smooth move shot beginning
-      await client.createWaypoint(
+      const smoothStart = await client.createWaypoint(
         [10, -15, 8],         // position
         'camera_position',    // waypoint_type
         'smooth_shot_start',  // name
@@ -590,7 +616,7 @@ class MCPTestSuite {
       );
 
       // Waypoint for smooth move shot end
-      await client.createWaypoint(
+      const smoothEnd = await client.createWaypoint(
         [5, 10, 12],          // position
         'camera_position',    // waypoint_type
         'smooth_shot_end',    // name
@@ -599,7 +625,7 @@ class MCPTestSuite {
       );
 
       // Waypoint for arc shot beginning
-      await client.createWaypoint(
+      const arcStart = await client.createWaypoint(
         [15, 5, 10],          // position
         'camera_position',    // waypoint_type
         'arc_shot_start',     // name
@@ -608,7 +634,7 @@ class MCPTestSuite {
       );
 
       // Waypoint for arc shot end
-      await client.createWaypoint(
+      const arcEnd = await client.createWaypoint(
         [-10, -5, 8],         // position
         'camera_position',    // waypoint_type
         'arc_shot_end',       // name
@@ -617,7 +643,7 @@ class MCPTestSuite {
       );
 
       // Waypoint for orbit shot center
-      await client.createWaypoint(
+      const orbitCenter = await client.createWaypoint(
         [0, 0, 2],            // position
         'point_of_interest',  // waypoint_type
         'orbit_center',       // name
@@ -625,10 +651,59 @@ class MCPTestSuite {
         { shotType: 'orbit', phase: 'center', radius: 12, elevation: 25, azimuth: 90 } // metadata
       );
 
+      // Extract waypoint IDs from responses and assign to group
+      if (cameraGroupId) {
+        // Get the actual waypoint ID for test_waypoint
+        const allWaypoints = await client.listWaypoints();
+        if (allWaypoints?.success && allWaypoints.result?.structuredContent?.result) {
+          const resultText = allWaypoints.result.structuredContent.result;
+
+          // Extract the test_waypoint ID using regex
+          const testWaypointMatch = resultText.match(/\*\*test_waypoint\*\*.*?\[ID: (wp_[a-f0-9]+)\]/);
+          if (testWaypointMatch) {
+            const testWaypointId = testWaypointMatch[1];
+
+            try {
+              await client.addWaypointToGroups(testWaypointId, [cameraGroupId]);
+              if (this.options.verbose) {
+                console.log(`Successfully added waypoint ${testWaypointId} to group ${cameraGroupId}`);
+              }
+            } catch (error) {
+              if (this.options.verbose) {
+                console.log(`Failed to add waypoint to group: ${error.message}`);
+              }
+            }
+          } else {
+            if (this.options.verbose) {
+              console.log('Could not extract test_waypoint ID from waypoint list');
+            }
+          }
+        }
+      }
+
       // Verify waypoints were created
       const shotWaypoints = await client.listWaypoints('camera_position');
       if (this.options.verbose) {
         console.log('Created camera shot waypoints:', JSON.stringify(shotWaypoints, null, 2));
+      }
+    }, 'worldsurveyor');
+
+    // Test getting waypoints from group
+    await this.runTest('WorldSurveyor Get Group Waypoints', async () => {
+      const groupsResult = await client.listGroups();
+      let cameraGroupId = null;
+
+      if (groupsResult?.success && groupsResult.result?.structuredContent?.result) {
+        const resultText = groupsResult.result.structuredContent.result;
+        const match = resultText.match(/CameraShots \(ID: ([^)]+)\)/);
+        cameraGroupId = match ? match[1] : null;
+      }
+
+      if (cameraGroupId) {
+        const groupWaypoints = await client.getGroupWaypoints(cameraGroupId);
+        if (this.options.verbose) {
+          console.log('Group waypoints:', JSON.stringify(groupWaypoints, null, 2));
+        }
       }
     }, 'worldsurveyor');
 
@@ -796,6 +871,68 @@ class MCPTestSuite {
         } else {
           this.log('🗺️  No waypoints to clear', COLORS.YELLOW);
         }
+
+        // Check for and remove groups
+        try {
+          const groupsResult = await surveyorClient.listGroups();
+          if (this.options.verbose) {
+            console.log('Raw groups response:', JSON.stringify(groupsResult, null, 2));
+          }
+
+          let groupCount = 0;
+          let foundGroups = false;
+
+          if (groupsResult?.success && groupsResult.result?.structuredContent?.result) {
+            const resultText = groupsResult.result.structuredContent.result;
+
+            // Check for "No groups found" message
+            if (resultText.includes('No groups found')) {
+              this.log('📁 No groups to remove', COLORS.YELLOW);
+            } else {
+              foundGroups = true;
+
+              // Try different parsing patterns
+              const foundMatch = resultText.match(/Found (\d+) group\(s\)/);
+              if (foundMatch) {
+                groupCount = parseInt(foundMatch[1]);
+                this.log(`📁 Found ${groupCount} groups, removing them...`, COLORS.YELLOW);
+
+                // Extract group IDs from the result text - try multiple patterns
+                const groupMatches = [...resultText.matchAll(/\(ID: ([^)]+)\)/g)];
+                const altGroupMatches = [...resultText.matchAll(/Group ID: ([^\s\n]+)/g)];
+                const allMatches = [...groupMatches, ...altGroupMatches];
+
+                for (const match of allMatches) {
+                  const groupId = match[1];
+                  try {
+                    await surveyorClient.removeGroup(groupId, true); // cascade=true
+                    if (this.options.verbose) {
+                      console.log(`Removed group: ${groupId}`);
+                    }
+                  } catch (groupError) {
+                    if (this.options.verbose) {
+                      console.log(`Failed to remove group ${groupId}: ${groupError.message}`);
+                    }
+                  }
+                }
+              } else {
+                // Fallback: if groups exist but we can't parse count, log the issue
+                if (this.options.verbose) {
+                  console.log('Groups appear to exist but cannot parse count from:', resultText);
+                }
+                this.log('📁 Groups detected but cleanup parsing failed', COLORS.YELLOW);
+              }
+            }
+          } else {
+            this.log('📁 Unable to check groups', COLORS.YELLOW);
+          }
+        } catch (groupsError) {
+          if (this.options.verbose) {
+            console.log(`Could not clean groups: ${groupsError.message}`);
+          }
+          this.log('📁 Group cleanup error (continuing)', COLORS.YELLOW);
+        }
+
       } catch (waypointError) {
         // Waypoint clearing is optional, don't fail the whole clean operation
         if (this.options.verbose) {
