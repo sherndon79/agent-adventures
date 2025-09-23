@@ -38,7 +38,14 @@ async def worldsurveyor_create_group(
     if description is not None:
         args["description"] = description
     if color is not None:
-        args["color"] = color
+        # Convert RGB array to hex string for extension database storage
+        if isinstance(color, list) and len(color) == 3:
+            r = int(round(color[0] * 255))
+            g = int(round(color[1] * 255))
+            b = int(round(color[2] * 255))
+            args["color"] = f"#{r:02x}{g:02x}{b:02x}"
+        else:
+            args["color"] = color
 
     result = await client.request('groups/create', payload=args)
     return result

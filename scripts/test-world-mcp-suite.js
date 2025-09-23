@@ -30,6 +30,7 @@ const COLORS = {
   YELLOW: '\x1b[33m',
   BLUE: '\x1b[34m',
   CYAN: '\x1b[36m',
+  GRAY: '\x1b[90m',
   RESET: '\x1b[0m',
   BOLD: '\x1b[1m'
 };
@@ -103,6 +104,7 @@ class MCPTestSuite {
     this.log(`⏭️  ${testName} (${reason})`, COLORS.YELLOW);
   }
 
+
   // ========== WorldBuilder Tests ==========
 
   async testWorldBuilder() {
@@ -156,8 +158,8 @@ class MCPTestSuite {
 
     // Place USD asset (at origin for easy reference)
     await this.runTest('WorldBuilder Place Asset', async () => {
-      const assetPath = '/home/sherndon/agent-adventures/assets/demo/Mugs/SM_Mug_A2.usd';
-      await client.placeAsset('test_mug', assetPath, [0, 0, 0.5], [0, 0, 0], [0.1, 0.1, 0.1]);
+      const assetPath = '/home/sherndon/agent-world/assets/demo/Mugs/SM_Mug_A2.usd';
+      await client.placeAsset('test_mug', assetPath, [0, 0, 0.5], [0, 0, 0], [0.1, 0.1, 0.1], '/World/test_mug');
     }, 'worldbuilder');
 
     // Create batch: Mini Castle (well spaced from individual objects)
@@ -577,13 +579,99 @@ class MCPTestSuite {
 
       // Extract group ID from creation response for cleanup
       if (result?.success && result.result?.structuredContent?.result) {
-        const resultText = result.result.structuredContent.result;
-        const match = resultText.match(/Group ID:\*\* ([^\s\n]+)/);
-        if (match) {
-          testGroupId = match[1];
+        const resultData = result.result.structuredContent.result;
+        // The result is now an object, not a string
+        if (resultData.group_id) {
+          testGroupId = resultData.group_id;
           if (this.options.verbose) {
             console.log(`Extracted group ID for cleanup: ${testGroupId}`);
           }
+        }
+      }
+    }, 'worldsurveyor');
+
+    // Test multiple groups including nested groups
+    await this.runTest('WorldSurveyor Multiple Groups and Hierarchy', async () => {
+      // Create multiple department groups
+      const departments = [
+        { name: 'Lighting Department', description: 'Lighting setup waypoints', color: '#F39C12' },
+        { name: 'Art Department', description: 'Asset placement points', color: '#27AE60' },
+        { name: 'Audio Department', description: 'Audio capture points', color: '#3498DB' }
+      ];
+
+      const createdGroupIds = [];
+
+      for (const dept of departments) {
+        const groupResult = await client.createGroup(dept.name, dept.description, dept.color);
+        if (groupResult?.success && groupResult.result?.structuredContent?.result?.group_id) {
+          createdGroupIds.push(groupResult.result.structuredContent.result.group_id);
+        }
+      }
+
+      // Create nested subgroups under the first department
+      if (createdGroupIds.length > 0) {
+        const subgroups = [
+          { name: 'Planning Phase', description: 'Planning stage waypoints', color: '#95A5A6' },
+          { name: 'In Progress', description: 'Active waypoints', color: '#F1C40F' }
+        ];
+
+        for (const subgroup of subgroups) {
+          try {
+            const subResult = await client.createGroup(
+              subgroup.name,
+              subgroup.description,
+              subgroup.color,
+              createdGroupIds[0] // parent_group_id
+            );
+
+            if (this.options.verbose) {
+              if (subResult?.success) {
+                console.log(`Created nested group: ${subgroup.name} under ${departments[0].name}`);
+              } else {
+                console.log(`Failed to create nested group: ${subgroup.name} - ${JSON.stringify(subResult)}`);
+              }
+            }
+          } catch (error) {
+            if (this.options.verbose) {
+              console.log(`Error creating nested group ${subgroup.name}: ${error.message}`);
+            }
+          }
+        }
+      }
+
+      // Verify multiple groups were created using hierarchy to count all groups
+      const hierarchyResult = await client.getGroupHierarchy();
+
+      if (hierarchyResult?.success && hierarchyResult.result?.structuredContent?.result) {
+        // Count total groups from hierarchy (includes nested groups)
+        function countGroupsInHierarchy(hierarchyData) {
+          let count = 0;
+          if (hierarchyData.groups) {
+            count += hierarchyData.groups.length;
+            // Count nested groups recursively
+            for (const group of hierarchyData.groups) {
+              if (group.children && group.children.length > 0) {
+                count += countGroupsInHierarchy({ groups: group.children });
+              }
+            }
+          }
+          return count;
+        }
+
+        const totalGroupCount = countGroupsInHierarchy(hierarchyResult.result.structuredContent.result);
+
+        if (this.options.verbose) {
+          console.log(`Total groups created (including nested): ${totalGroupCount}`);
+          // Also show top-level groups for clarity
+          const topLevelGroups = await client.listGroups();
+          if (topLevelGroups?.success && topLevelGroups.result?.structuredContent?.result?.groups) {
+            console.log('Top-level groups:', topLevelGroups.result.structuredContent.result.groups.map(g => g.name).join(', '));
+          }
+        }
+
+        // Should have at least 6 groups (1 initial + 3 departments + 2 subgroups)
+        if (totalGroupCount < 6) {
+          throw new Error(`Expected at least 6 groups total, got ${totalGroupCount}`);
         }
       }
     }, 'worldsurveyor');
@@ -595,9 +683,10 @@ class MCPTestSuite {
       let cameraGroupId = null;
 
       if (groupsResult?.success && groupsResult.result?.structuredContent?.result) {
-        const resultText = groupsResult.result.structuredContent.result;
-        const match = resultText.match(/CameraShots \(ID: ([^)]+)\)/);
-        cameraGroupId = match ? match[1] : null;
+        const resultData = groupsResult.result.structuredContent.result;
+        // Find the CameraShots group in the groups array
+        const cameraGroup = resultData.groups?.find(group => group.name === 'CameraShots');
+        cameraGroupId = cameraGroup?.id || null;
       }
 
       // Store waypoint IDs for group assignment
@@ -651,33 +740,44 @@ class MCPTestSuite {
         { shotType: 'orbit', phase: 'center', radius: 12, elevation: 25, azimuth: 90 } // metadata
       );
 
-      // Extract waypoint IDs from responses and assign to group
+      // Extract waypoint IDs from responses and assign to groups
       if (cameraGroupId) {
-        // Get the actual waypoint ID for test_waypoint
-        const allWaypoints = await client.listWaypoints();
-        if (allWaypoints?.success && allWaypoints.result?.structuredContent?.result) {
-          const resultText = allWaypoints.result.structuredContent.result;
+        // Collect waypoint IDs from the creation responses
+        const waypointIds = [];
 
-          // Extract the test_waypoint ID using regex
-          const testWaypointMatch = resultText.match(/\*\*test_waypoint\*\*.*?\[ID: (wp_[a-f0-9]+)\]/);
-          if (testWaypointMatch) {
-            const testWaypointId = testWaypointMatch[1];
+        // Extract IDs from waypoint creation responses
+        if (smoothStart?.success && smoothStart.result?.structuredContent?.result?.waypoint_id) {
+          waypointIds.push(smoothStart.result.structuredContent.result.waypoint_id);
+        }
+        if (smoothEnd?.success && smoothEnd.result?.structuredContent?.result?.waypoint_id) {
+          waypointIds.push(smoothEnd.result.structuredContent.result.waypoint_id);
+        }
+        if (arcStart?.success && arcStart.result?.structuredContent?.result?.waypoint_id) {
+          waypointIds.push(arcStart.result.structuredContent.result.waypoint_id);
+        }
+        if (arcEnd?.success && arcEnd.result?.structuredContent?.result?.waypoint_id) {
+          waypointIds.push(arcEnd.result.structuredContent.result.waypoint_id);
+        }
+        if (orbitCenter?.success && orbitCenter.result?.structuredContent?.result?.waypoint_id) {
+          waypointIds.push(orbitCenter.result.structuredContent.result.waypoint_id);
+        }
 
-            try {
-              await client.addWaypointToGroups(testWaypointId, [cameraGroupId]);
-              if (this.options.verbose) {
-                console.log(`Successfully added waypoint ${testWaypointId} to group ${cameraGroupId}`);
-              }
-            } catch (error) {
-              if (this.options.verbose) {
-                console.log(`Failed to add waypoint to group: ${error.message}`);
-              }
-            }
-          } else {
+        // Add all waypoints to the CameraShots group
+        for (const waypointId of waypointIds) {
+          try {
+            await client.addWaypointToGroups(waypointId, [cameraGroupId]);
             if (this.options.verbose) {
-              console.log('Could not extract test_waypoint ID from waypoint list');
+              console.log(`Successfully added waypoint ${waypointId} to group ${cameraGroupId}`);
+            }
+          } catch (error) {
+            if (this.options.verbose) {
+              console.log(`Failed to add waypoint ${waypointId} to group: ${error.message}`);
             }
           }
+        }
+
+        if (this.options.verbose) {
+          console.log(`Added ${waypointIds.length} waypoints to CameraShots group`);
         }
       }
 
@@ -694,9 +794,10 @@ class MCPTestSuite {
       let cameraGroupId = null;
 
       if (groupsResult?.success && groupsResult.result?.structuredContent?.result) {
-        const resultText = groupsResult.result.structuredContent.result;
-        const match = resultText.match(/CameraShots \(ID: ([^)]+)\)/);
-        cameraGroupId = match ? match[1] : null;
+        const resultData = groupsResult.result.structuredContent.result;
+        // Find the CameraShots group in the groups array
+        const cameraGroup = resultData.groups?.find(group => group.name === 'CameraShots');
+        cameraGroupId = cameraGroup?.id || null;
       }
 
       if (cameraGroupId) {
@@ -840,6 +941,9 @@ class MCPTestSuite {
       // Clear WorldBuilder scene
       builderClient = new WorldBuilderClient({ enableLogging: this.options.verbose });
       await builderClient.initialize();
+
+      // Clear the scene
+      this.log('🗑️  Clearing scene...', COLORS.YELLOW);
       await builderClient.clearScene('/World', true);
 
       // Clear WorldSurveyor waypoints
@@ -853,12 +957,11 @@ class MCPTestSuite {
           console.log('Raw waypoints response:', JSON.stringify(waypoints, null, 2));
         }
 
-        // Parse waypoint count from the text response
+        // Parse waypoint count from the object response
         let waypointCount = 0;
         if (waypoints?.result?.structuredContent?.result) {
-          const resultText = waypoints.result.structuredContent.result;
-          const match = resultText.match(/Found (\d+) waypoint\(s\)/);
-          waypointCount = match ? parseInt(match[1]) : 0;
+          const resultData = waypoints.result.structuredContent.result;
+          waypointCount = resultData.waypoints?.length || 0;
         }
         if (waypointCount > 0) {
           this.log(`🗺️  Found ${waypointCount} waypoints, clearing them...`, COLORS.YELLOW);
@@ -883,44 +986,21 @@ class MCPTestSuite {
           let foundGroups = false;
 
           if (groupsResult?.success && groupsResult.result?.structuredContent?.result) {
-            const resultText = groupsResult.result.structuredContent.result;
+            const resultData = groupsResult.result.structuredContent.result;
 
-            // Check for "No groups found" message
-            if (resultText.includes('No groups found')) {
+            // Check group count from object response
+            groupCount = resultData.groups?.length || 0;
+
+            if (groupCount === 0) {
               this.log('📁 No groups to remove', COLORS.YELLOW);
             } else {
               foundGroups = true;
+              this.log(`📁 Found ${groupCount} groups, removing them...`, COLORS.YELLOW);
 
-              // Try different parsing patterns
-              const foundMatch = resultText.match(/Found (\d+) group\(s\)/);
-              if (foundMatch) {
-                groupCount = parseInt(foundMatch[1]);
-                this.log(`📁 Found ${groupCount} groups, removing them...`, COLORS.YELLOW);
-
-                // Extract group IDs from the result text - try multiple patterns
-                const groupMatches = [...resultText.matchAll(/\(ID: ([^)]+)\)/g)];
-                const altGroupMatches = [...resultText.matchAll(/Group ID: ([^\s\n]+)/g)];
-                const allMatches = [...groupMatches, ...altGroupMatches];
-
-                for (const match of allMatches) {
-                  const groupId = match[1];
-                  try {
-                    await surveyorClient.removeGroup(groupId, true); // cascade=true
-                    if (this.options.verbose) {
-                      console.log(`Removed group: ${groupId}`);
-                    }
-                  } catch (groupError) {
-                    if (this.options.verbose) {
-                      console.log(`Failed to remove group ${groupId}: ${groupError.message}`);
-                    }
-                  }
-                }
-              } else {
-                // Fallback: if groups exist but we can't parse count, log the issue
-                if (this.options.verbose) {
-                  console.log('Groups appear to exist but cannot parse count from:', resultText);
-                }
-                this.log('📁 Groups detected but cleanup parsing failed', COLORS.YELLOW);
+              // Use bulk clearGroups method instead of individual removals
+              const clearResult = await surveyorClient.clearGroups(true);
+              if (this.options.verbose) {
+                console.log('Group clear result:', JSON.stringify(clearResult, null, 2));
               }
             }
           } else {

@@ -48,7 +48,23 @@ export class WorldSurveyorClient extends HTTPMCPClient {
    * Create a new waypoint group
    */
   async createGroup(name, description = '', color = '#4A90E2', parentGroupId = null) {
-    const params = { name, description, color };
+    const params = { name, description };
+
+    // Convert hex color to RGB array for MCP server
+    if (color) {
+      if (typeof color === 'string' && color.startsWith('#')) {
+        // Convert hex to RGB array (0-1 range)
+        const hex = color.substring(1);
+        const r = parseInt(hex.substring(0, 2), 16) / 255;
+        const g = parseInt(hex.substring(2, 4), 16) / 255;
+        const b = parseInt(hex.substring(4, 6), 16) / 255;
+        params.color = [r, g, b];
+      } else if (Array.isArray(color)) {
+        // Already in RGB array format
+        params.color = color;
+      }
+    }
+
     if (parentGroupId) params.parent_group_id = parentGroupId;
 
     return await this.executeCommand('worldsurveyor_create_group', params);
@@ -92,6 +108,13 @@ export class WorldSurveyorClient extends HTTPMCPClient {
       group_id: groupId,
       cascade
     });
+  }
+
+  /**
+   * Clear all groups from the scene
+   */
+  async clearGroups(confirm = false) {
+    return await this.executeCommand('worldsurveyor_clear_groups', { confirm });
   }
 
   // ========== Extended Waypoint Management ==========
