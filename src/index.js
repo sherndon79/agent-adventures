@@ -63,6 +63,7 @@ class AdventuresPlatform {
         autoStart: process.env.START_SAMPLE_DAG === 'true',
         defaultAdventure: 'sample-adventure',
         enableLogging: true,
+        enableMockHandlers: process.env.ORCHESTRATOR_MOCK_HANDLERS !== 'false',
         ...config.orchestrator
       }
     };
@@ -78,6 +79,7 @@ class AdventuresPlatform {
     this.webServer = null;
     this.mcpClientManager = null;
     this.orchestratorManager = null;
+    this.orchestratorMockHandlers = null;
   }
 
   /**
@@ -213,6 +215,10 @@ class AdventuresPlatform {
         await this.agentManager.shutdown();
       }
 
+      if (this.orchestratorMockHandlers?.shutdown) {
+        await this.orchestratorMockHandlers.shutdown();
+      }
+
       if (this.orchestratorManager) {
         await this.orchestratorManager.shutdown();
       }
@@ -315,6 +321,14 @@ class AdventuresPlatform {
         : console
     });
     console.log('   ✓ Orchestrator Manager initialized');
+
+    if (this.config.orchestrator.enableMockHandlers) {
+      const { OrchestratorMockHandlers } = await import('./services/orchestrator/mock-handlers.js');
+      this.orchestratorMockHandlers = new OrchestratorMockHandlers({
+        eventBus: this.eventBus
+      });
+      console.log('   ✓ Orchestrator mock handlers attached');
+    }
   }
 
   /**
