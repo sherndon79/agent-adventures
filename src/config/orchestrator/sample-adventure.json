@@ -1,0 +1,59 @@
+{
+  "id": "sample-adventure",
+  "description": "Reference pipeline describing the default orchestration flow.",
+  "stages": [
+    {
+      "id": "story_seed",
+      "type": "llm",
+      "description": "Generate the next narrative beat and summary notes.",
+      "dependsOn": [],
+      "budget": { "tokens": 4000, "timeMs": 6000 },
+      "outputs": ["storyBeat", "summary"],
+      "retry": { "attempts": 1, "delayMs": 250 }
+    },
+    {
+      "id": "asset_concepts",
+      "type": "llm",
+      "description": "Brainstorm asset requirements for the beat (props, set dressing).",
+      "dependsOn": ["story_seed"],
+      "budget": { "tokens": 2000, "timeMs": 4000 },
+      "outputs": ["assetIdeas"],
+      "retry": { "attempts": 1, "delayMs": 250 }
+    },
+    {
+      "id": "asset_placement",
+      "type": "mcp:worldbuilder",
+      "description": "Realize selected assets in the Isaac Sim stage via WorldBuilder MCP.",
+      "dependsOn": ["asset_concepts"],
+      "budget": { "timeMs": 8000 },
+      "outputs": ["placementSummary"],
+      "retry": { "attempts": 2, "delayMs": 500 }
+    },
+    {
+      "id": "camera_plan",
+      "type": "mcp:worldviewer",
+      "description": "Plan and execute cinematography to showcase the updated scene.",
+      "dependsOn": ["asset_placement"],
+      "budget": { "timeMs": 5000 },
+      "outputs": ["cameraMoves"]
+    },
+    {
+      "id": "dialogue",
+      "type": "llm",
+      "description": "Author dialogue or narration for the active characters.",
+      "dependsOn": ["story_seed", "camera_plan"],
+      "budget": { "tokens": 3000, "timeMs": 5000 },
+      "outputs": ["dialogueScript"],
+      "retry": { "attempts": 1, "delayMs": 250 }
+    },
+    {
+      "id": "audio_mix",
+      "type": "audio",
+      "description": "Trigger narration/commentary TTS and arrange ambient/music cues.",
+      "dependsOn": ["dialogue"],
+      "budget": { "timeMs": 7000 },
+      "outputs": ["audioStatus"],
+      "optional": true
+    }
+  ]
+}
