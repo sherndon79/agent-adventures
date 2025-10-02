@@ -3,10 +3,17 @@
   "description": "Reference pipeline describing the default orchestration flow.",
   "stages": [
     {
+      "id": "scene_reset",
+      "type": "system:scene-reset",
+      "description": "Clear stage assets, waypoints, and groups prior to this beat.",
+      "dependsOn": [],
+      "budget": { "timeMs": 5000 }
+    },
+    {
       "id": "story_seed",
       "type": "llm",
       "description": "Generate the next narrative beat and summary notes.",
-      "dependsOn": [],
+      "dependsOn": ["scene_reset"],
       "budget": { "tokens": 4000, "timeMs": 6000 },
       "outputs": ["storyBeat", "summary"],
       "retry": { "attempts": 1, "delayMs": 250 }

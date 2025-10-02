@@ -17,6 +17,10 @@ async function loadSampleConfig() {
 function createMockHandlers(eventBus) {
   const handlers = new Map();
 
+  handlers.set('scene_reset', async () => {
+    return { cleared: true };
+  });
+
   const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
   handlers.set('story_seed', async ({ stage }) => {
@@ -60,6 +64,16 @@ async function run() {
   const runner = new DAGRunner(config, { eventBus });
 
   const handlers = createMockHandlers(eventBus);
+  eventBus.subscribe('orchestrator:scene:reset', ({ payload }) => {
+    console.log('🧹 Scene reset requested');
+    setTimeout(() => {
+      eventBus.emit('orchestrator:scene:reset:complete', {
+        requestId: payload.requestId,
+        result: { cleared: true }
+      });
+    }, 50);
+  });
+
   for (const [id, handler] of handlers.entries()) {
     runner.registerStageHandler(id, handler);
   }
