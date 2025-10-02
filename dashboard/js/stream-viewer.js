@@ -8,67 +8,120 @@ class StreamViewer {
     this.dashboard = dashboard;
     this.streamActive = false;
     this.webrtcPlayer = null;
-    this.playerConfig = {
-      host: window.location.hostname,
-      port: 3333,
-      application: 'agent_adventures',
-      stream: 'isaac_sim'
-    };
+    this.activeSession = null;
+    this.healthDetails = [];
 
-    this.bindEvents();
+    this.streamContainer = document.getElementById('stream-player');
+    if (this.streamContainer) {
+      this.showStreamPlaceholder(this.streamContainer);
+    }
+
+    this.setupEventHandlers();
+    this.fetchInitialStatus();
     console.log('✅ StreamViewer module initialized');
   }
 
-  bindEvents() {
-    // Stream controls already bound in dashboard-core.js
-    // This module handles the stream state updates
+  async fetchInitialStatus() {
+    try {
+      const response = await fetch('/api/stream/status');
+      if (!response.ok) {
+        throw new Error(`Failed to fetch initial status (${response.status})`);
+      }
+      const data = await response.json();
+      this.updateStreamStatus(data);
+    } catch (error) {
+      console.error('Error fetching initial stream status:', error);
+    }
   }
 
-  updateStreamStatus(status) {
-    this.streamActive = status.active || false;
 
-    const qualityElement = document.getElementById('stream-quality');
-    const latencyElement = document.getElementById('stream-latency');
-    const viewerCountElement = document.getElementById('viewer-count');
+
+  setupEventHandlers() {
     const startButton = document.getElementById('start-stream');
     const stopButton = document.getElementById('stop-stream');
 
-    if (qualityElement) {
-      qualityElement.textContent = this.streamActive ? (status.quality || 'Good') : 'Not streaming';
-    }
-
-    if (latencyElement) {
-      latencyElement.textContent = this.streamActive ? `${status.latency || 150}ms` : '--ms';
-    }
-
-    if (viewerCountElement) {
-      viewerCountElement.textContent = status.viewers || 0;
-    }
-
-    // Update button states
     if (startButton) {
-      startButton.disabled = this.streamActive;
+      startButton.addEventListener('click', () => this.startStream());
+    }
+
+    if (stopButton) {
+      stopButton.addEventListener('click', () => this.stopStream());
+    }
+  }
+
+  async startStream() {
+    try {
+      this.updateStreamStatus({ status: 'starting' });
+      const response = await fetch('/api/stream/start', { method: 'POST' });
+      if (!response.ok) {
+        throw new Error(`Failed to start stream (${response.status})`);
+      }
+      this.dashboard.logActivity('stream', 'CONTROL', 'Start stream command sent');
+    } catch (error) {
+      console.error('Error starting stream:', error);
+      this.dashboard.logActivity('error', 'CONTROL', `Start stream failed: ${error.message}`);
+      this.updateStreamStatus({ status: 'stopped' });
+    }
+  }
+
+  async stopStream() {
+    try {
+      const response = await fetch('/api/stream/stop', { method: 'POST' });
+      if (!response.ok) {
+        throw new Error(`Failed to stop stream (${response.status})`);
+      }
+      this.dashboard.logActivity('stream', 'CONTROL', 'Stop stream command sent');
+    } catch (error) {
+      console.error('Error stopping stream:', error);
+      this.dashboard.logActivity('error', 'CONTROL', `Stop stream failed: ${error.message}`);
+    }
+  }
+
+  updateStreamStatus(payload = {}) {
+    const status = payload.status || 'idle';
+    this.streamActive = status === 'running';
+    const isStarting = status === 'starting';
+
+    if (this.streamActive && payload.session) {
+      this.activeSession = payload.session;
+    } else if (!this.streamActive) {
+      this.activeSession = null;
+    }
+
+    const startButton = document.getElementById('start-stream');
+    const stopButton = document.getElementById('stop-stream');
+    if (startButton) {
+      startButton.disabled = this.streamActive || isStarting;
     }
     if (stopButton) {
-      stopButton.disabled = !this.streamActive;
+      stopButton.disabled = !this.streamActive || isStarting;
     }
 
-    // Update stream player
-    this.updateStreamPlayer(status);
+    if (this.streamContainer) {
+      this.updateStreamPlayer();
+    }
+
+    this.updateStreamMetrics();
+
+    if (this.dashboard?.syncStreamControls) {
+      this.dashboard.syncStreamControls({
+        status,
+        session: this.activeSession,
+      });
+    }
   }
 
-  updateStreamPlayer(status) {
-    const streamPlayer = document.getElementById('stream-player');
-    if (!streamPlayer) return;
+  updateStreamPlayer() {
+    if (!this.streamContainer) return;
 
-    if (this.streamActive && status.active) {
-      this.startWebRTCPlayer(streamPlayer);
+    if (this.streamActive && this.activeSession) {
+      this.startWebRTCPlayer(this.streamContainer, this.activeSession);
     } else {
-      this.stopWebRTCPlayer(streamPlayer);
+      this.stopWebRTCPlayer(this.streamContainer);
     }
   }
 
-  startWebRTCPlayer(container) {
+  startWebRTCPlayer(container, session) {
     if (this.webrtcPlayer) {
       this.stopWebRTCPlayer();
     }
@@ -77,28 +130,30 @@ class StreamViewer {
     container.innerHTML = '';
 
     try {
-      // Create WebRTC player (simplified for demo - would integrate with OME WebRTC)
-      const playerElement = document.createElement('div');
-      playerElement.className = 'webrtc-player';
-      playerElement.innerHTML = `
-        <div class="stream-active">
-          <div class="stream-indicator">🔴 LIVE</div>
-          <div class="stream-placeholder-content">
-            <div style="font-size: 2rem; margin-bottom: 1rem;">📺</div>
-            <p>Isaac Sim Stream Active</p>
-            <small>WebRTC Player Connected</small>
-          </div>
-        </div>
-      `;
+      const previewUrl = session.webRTCMonitorUrl;
 
-      container.appendChild(playerElement);
+      if (!previewUrl) {
+        this.showStreamError(container, 'WebRTC preview unavailable');
+        return;
+      }
 
-      // In a real implementation, this would initialize the OME WebRTC player
-      this.simulateStreamContent(playerElement);
+      const iframe = document.createElement('iframe');
+      iframe.className = 'webrtc-frame';
+      iframe.src = previewUrl;
+      iframe.allow = 'autoplay; fullscreen; picture-in-picture';
+      iframe.setAttribute('title', 'WebRTC preview');
+      iframe.setAttribute('loading', 'eager');
 
-      this.webrtcPlayer = playerElement;
+      const liveIndicator = document.createElement('div');
+      liveIndicator.className = 'stream-indicator';
+      liveIndicator.textContent = '🔴 LIVE';
 
-      this.dashboard.logActivity('stream', 'PLAYER', 'WebRTC player started');
+      container.appendChild(liveIndicator);
+      container.appendChild(iframe);
+
+      this.webrtcPlayer = iframe;
+
+      this.dashboard.logActivity('stream', 'PLAYER', 'WebRTC preview embedded');
 
     } catch (error) {
       console.error('Failed to start WebRTC player:', error);
@@ -140,49 +195,56 @@ class StreamViewer {
     `;
   }
 
-  simulateStreamContent(playerElement) {
-    // Simulate live stream activity indicators
-    let frameCount = 0;
-    const updateInterval = setInterval(() => {
-      if (!this.streamActive || !this.webrtcPlayer) {
-        clearInterval(updateInterval);
-        return;
-      }
-
-      frameCount++;
-
-      // Update frame info (simulated)
-      const indicator = playerElement.querySelector('.stream-indicator');
-      if (indicator) {
-        indicator.textContent = `🔴 LIVE - Frame ${frameCount}`;
-      }
-
-      // Simulate viewer count changes
-      const currentViewers = parseInt(document.getElementById('viewer-count')?.textContent || '0');
-      const viewerChange = Math.random() > 0.7 ? (Math.random() > 0.5 ? 1 : -1) : 0;
-      const newViewers = Math.max(0, currentViewers + viewerChange);
-
-      if (document.getElementById('viewer-count')) {
-        document.getElementById('viewer-count').textContent = newViewers;
-      }
-
-    }, 2000);
-  }
-
   // Public API methods
   getStreamStatus() {
     return {
       active: this.streamActive,
       hasPlayer: !!this.webrtcPlayer,
-      playerConfig: this.playerConfig
+      session: this.activeSession,
+      health: this.healthDetails
     };
   }
 
-  setPlayerConfig(config) {
-    this.playerConfig = { ...this.playerConfig, ...config };
+  updateStreamMetrics() {
+    const qualityElement = document.getElementById('stream-quality');
+    const latencyElement = document.getElementById('stream-latency');
+    const viewerCountElement = document.getElementById('viewer-count');
+
+    if (qualityElement) {
+      if (this.streamActive && this.activeSession) {
+        const bitrate = this.activeSession.videoBitrateK ? `${this.activeSession.videoBitrateK} kbps` : 'auto';
+        const fps = this.activeSession.fps || 'N/A';
+        qualityElement.textContent = `${bitrate} @ ${fps} fps`;
+      } else {
+        qualityElement.textContent = 'Not streaming';
+      }
+    }
+
+    if (latencyElement) {
+      if (this.healthDetails.length) {
+        const summary = this.healthDetails
+          .map(item => `${item.name}:${item.status}`)
+          .join(' · ');
+        latencyElement.textContent = summary;
+      } else if (this.streamActive) {
+        latencyElement.textContent = 'Checking health...';
+      } else {
+        latencyElement.textContent = '--';
+      }
+    }
+
+    if (viewerCountElement) {
+      viewerCountElement.textContent = this.streamActive ? '--' : '0';
+    }
   }
 
+
+
   destroy() {
+    if (this.healthPollTimer) {
+      clearInterval(this.healthPollTimer);
+      this.healthPollTimer = null;
+    }
     this.stopWebRTCPlayer();
     console.log('🔄 StreamViewer destroyed');
   }

@@ -1,0 +1,13 @@
+{
+  "screenshot_file": "isaac_sim_20250919_135450.png",
+  "timestamp": "2025-09-19T13:54:50.605079",
+  "file_size_bytes": 163203,
+  "purpose": "Check waypoint marker colors in Isaac Sim debug draw",
+  "tags": [
+    "worldsurveyor",
+    "debug-draw",
+    "marker-colors"
+  ],
+  "notes": "Looking at waypoint markers to assess color accuracy and debug draw limitations",
+  "tool_used": "screenshot_isaac_sim"
+}

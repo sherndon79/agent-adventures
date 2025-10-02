@@ -12,7 +12,7 @@ This document outlines the development roadmap for the Agent Adventures interact
 - **Isaac Sim Integration**: Docker containerization and HTTP API interfaces
 
 ### 🎯 Current Focus (Phase 1 - Core Platform)
-- **Streaming Platform Fundamentals**: Live video streaming infrastructure
+- **Streaming Platform Fundamentals**: Live video streaming infrastructure *(custom media bridge replacing OME; GPU-accelerated ffmpeg pipeline, WebRTC preview, configurable audio ingest)*
 - **Agent-to-World Communication**: Robust pipeline for AI agents to control Isaac Sim
 - **Competition Workflow Management**: Story generation, scene creation, judging pipeline
 - **Dashboard Interface**: Basic control and monitoring UI

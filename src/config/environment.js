@@ -144,10 +144,32 @@ export const config = {
 
   // Streaming Configuration
   streaming: {
+    mediaBridge: {
+      enabled: parseBoolean(process.env.MEDIA_BRIDGE_ENABLED ?? 'true', true),
+      directory: process.env.MEDIA_BRIDGE_DIR,
+      composeFile: process.env.MEDIA_BRIDGE_COMPOSE_FILE,
+      audioSource: process.env.MEDIA_BRIDGE_AUDIO_SOURCE || process.env.AUDIO_SOURCE,
+      audioToken: process.env.MEDIA_BRIDGE_AUDIO_TOKEN || process.env.AUDIO_TOKEN,
+      srtUrl: process.env.MEDIA_BRIDGE_SRT_URL || process.env.SRT_URL,
+      videoBitrateK: process.env.MEDIA_BRIDGE_VIDEO_BITRATE_K || process.env.VIDEO_BITRATE_K,
+      audioBitrateK: process.env.MEDIA_BRIDGE_AUDIO_BITRATE_K || process.env.AUDIO_BITRATE_K,
+      fps: process.env.MEDIA_BRIDGE_FPS || process.env.FPS,
+      webrtc: {
+        host: process.env.WEBRTC_PREVIEW_HOST || 'localhost',
+        port: parseInteger(process.env.WEBRTC_PORT, 8081),
+        path: process.env.WEBRTC_PREVIEW_PATH || '/'
+      }
+    },
     ome: {
       host: process.env.OME_HOST || 'localhost',
       port: parseInteger(process.env.OME_PORT, 1935),
-      appName: process.env.OME_APP_NAME || 'agent_adventures'
+      appName: process.env.OME_APP_NAME || 'agent_adventures',
+      api: {
+        host: process.env.OME_API_HOST || 'localhost',
+        port: parseInteger(process.env.OME_API_PORT, 8088),
+        token: process.env.OME_API_TOKEN,
+        useHttps: parseBoolean(process.env.OME_API_USE_HTTPS, false)
+      }
     },
     mockMode: parseBoolean(process.env.MOCK_STREAMING_MODE, true)
   },

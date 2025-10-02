@@ -74,6 +74,9 @@ class AgentAdventuresDashboard {
     // Start periodic updates
     this.startPeriodicUpdates();
 
+    // Align stream controls with current backend state
+    this.syncStreamControls();
+
     console.log('✅ Dashboard initialized successfully');
   }
 
@@ -90,15 +93,6 @@ class AgentAdventuresDashboard {
   }
 
   bindEventListeners() {
-    // Stream controls
-    document.getElementById('start-stream')?.addEventListener('click', () => {
-      this.sendCommand('streaming', 'start');
-    });
-
-    document.getElementById('stop-stream')?.addEventListener('click', () => {
-      this.sendCommand('streaming', 'stop');
-    });
-
     // Competition controls
     document.getElementById('start-competition')?.addEventListener('click', () => {
       const type = document.getElementById('competition-type')?.value || 'asset_placement';
@@ -162,30 +156,6 @@ class AgentAdventuresDashboard {
       [DASHBOARD_EVENT_TYPES.STREAM_STATUS]: (data) => {
         this.modules.streamViewer?.updateStreamStatus(data);
       },
-      [DASHBOARD_EVENT_TYPES.AGENT_PROPOSAL]: handler(this.onAgentProposal),
-      [DASHBOARD_EVENT_TYPES.JUDGE_DECISION]: handler(this.onJudgeDecision),
-      [DASHBOARD_EVENT_TYPES.COMPETITION_STARTED]: handler(this.onCompetitionStarted),
-      [DASHBOARD_EVENT_TYPES.COMPETITION_VOTING]: handler(this.onCompetitionVoting),
-      [DASHBOARD_EVENT_TYPES.COMPETITION_COMPLETED]: handler(this.onCompetitionCompleted),
-      [DASHBOARD_EVENT_TYPES.SETTINGS_UPDATED]: handler(this.onSettingsUpdated),
-      [DASHBOARD_EVENT_TYPES.ACTIVITY_LOG]: (data) => {
-        if (data && data.level && data.source && data.message) {
-          this.logActivity(data.level, data.source, data.message);
-        }
-      },
-      // Backwards compatibility with legacy event names
-      'platform:started': handler(this.handlePlatformStarted),
-      'platform:status': handler(this.handlePlatformStarted),
-      'agent:proposal': handler(this.onAgentProposal),
-      'proposal:decision_made': handler(this.onJudgeDecision),
-      'competition:started': handler(this.onCompetitionStarted),
-      'settings:updated': handler(this.onSettingsUpdated),
-      'system:metrics': (data) => {
-        this.modules.metricsTracker?.updateMetrics(data);
-      },
-      'stream:status': (data) => {
-        this.modules.streamViewer?.updateStreamStatus(data);
-      }
     };
   }
 
@@ -265,6 +235,7 @@ class AgentAdventuresDashboard {
 
     // Request initial data
     this.sendCommand('system', 'get_status');
+    this.modules.streamViewer?.fetchInitialStatus();
   }
 
   onSocketMessage(event) {
@@ -1098,6 +1069,57 @@ class AgentAdventuresDashboard {
     document.getElementById('toggle-judge-panel').checked = true;
 
     this.logActivity('system', 'SETTINGS', 'Reset to defaults');
+  }
+
+
+
+  syncStreamControls(state = {}) {
+    const status = state.status || (this.currentStreamSession?.status ?? 'idle');
+    const session = state.session || null;
+    const isLive = status === 'live';
+    const isStarting = status === 'starting';
+
+    if (session && session.id && isLive) {
+      this.currentStreamSession = session;
+    } else if (!isLive && !isStarting) {
+      this.currentStreamSession = null;
+    }
+
+    if (session?.monitoring?.youtubeWatchUrl && isLive) {
+      this.showYouTubeLink(session.monitoring.youtubeWatchUrl);
+    } else if (!isLive && !isStarting) {
+      this.hideYouTubeLink();
+    }
+  }
+
+  showYouTubeLink(url) {
+    // Add YouTube link to the stream info area
+    const streamInfo = document.querySelector('.stream-info');
+    if (streamInfo) {
+      const existingLink = streamInfo.querySelector('.youtube-link');
+      if (existingLink) {
+        existingLink.remove();
+      }
+
+      const linkElement = document.createElement('div');
+      linkElement.className = 'youtube-link';
+      linkElement.innerHTML = `
+        <div class="stat">
+          <span class="stat-label">YouTube:</span>
+          <a href="${url}" target="_blank" class="stat-value" style="color: #FF0000; text-decoration: none;">
+            🔗 Watch Stream
+          </a>
+        </div>
+      `;
+      streamInfo.appendChild(linkElement);
+    }
+  }
+
+  hideYouTubeLink() {
+    const existingLink = document.querySelector('.youtube-link');
+    if (existingLink) {
+      existingLink.remove();
+    }
   }
 
   // Cleanup

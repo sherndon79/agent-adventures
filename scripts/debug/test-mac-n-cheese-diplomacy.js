@@ -22,7 +22,7 @@ async function deployMacNCheeseDiplomacy() {
     console.log('\n🧀 Step 2: Deploying mac n cheese asset near timeout corner...');
 
     // Get absolute path to the mac n cheese asset
-    const assetPath = path.resolve('assets/demo/Food/mac_n_cheese.usd');
+    const assetPath = '/home/sherndon/agent-world/assets/demo/Food/mac_n_cheese.usd';
     console.log('Mac n cheese asset path:', assetPath);
 
     // Place mac n cheese near Little Castle Bro's timeout location (he's at [6, 1, 0.6])

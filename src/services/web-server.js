@@ -9,6 +9,7 @@ import { createServer } from 'http';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { WorldBuilderClient } from './mcp-clients/worldbuilder-client.js';
+import YouTubeStreamingController from './streaming/youtube-streaming-controller.js';
 import {
   DASHBOARD_EVENT_TYPES,
   adaptAgentProposal,
@@ -18,6 +19,9 @@ import {
   adaptPlatformStatus,
   adaptSettings
 } from './dashboard/dashboard-event-adapter.js';
+import streamRoutes from '../routes/streamRoutes.js';
+import audioRoutes from '../routes/audioRoutes.js';
+import { setupWebSocketServer } from '../controllers/streamController.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -38,6 +42,7 @@ export class WebServerService {
     this.clients = new Set();
     this.isRunning = false;
     this.worldBuilderClient = null;
+    this.streamingController = null;
     this.currentSettings = {
       llmApis: true,
       mcpCalls: true,
@@ -60,6 +65,7 @@ export class WebServerService {
 
       // API Routes
       this._setupApiRoutes();
+      this._setupStreamingRoutes();
 
       // Create HTTP server
       this.server = createServer(this.app);
@@ -72,6 +78,9 @@ export class WebServerService {
 
       // Initialize MCP clients
       await this._initializeMCPClients();
+
+      // Initialize streaming controller
+      this._initializeStreamingController();
 
       // Start server
       await this._startServer();
@@ -175,9 +184,31 @@ export class WebServerService {
   }
 
   /**
+   * Initialize streaming controller
+   */
+  _initializeStreamingController() {
+    try {
+      if (this.currentSettings.streaming) {
+        this.streamingController = new YouTubeStreamingController({
+          mediaBridgeDir: process.env.MEDIA_BRIDGE_DIR,
+          composeFile: process.env.MEDIA_BRIDGE_COMPOSE_FILE,
+          webrtcHealthUrl: process.env.WEBRTC_HEALTH_URL,
+          audioHealthUrl: process.env.AUDIO_HEALTH_URL
+        });
+        console.log('✅ YouTube Streaming Controller initialized');
+      }
+    } catch (error) {
+      console.warn('⚠️ Failed to initialize streaming controller:', error.message);
+    }
+  }
+
+  /**
    * Setup API routes
    */
   _setupApiRoutes() {
+    this.app.use('/api', streamRoutes);
+    this.app.use('/api/audio', audioRoutes);
+
     // Health check
     this.app.get('/api/health', (req, res) => {
       res.json({
@@ -273,48 +304,262 @@ export class WebServerService {
   }
 
   /**
+   * Setup YouTube Streaming API routes
+   */
+  _setupStreamingRoutes() {
+    const formatSession = (session = {}) => ({
+      id: session.id,
+      status: session.status,
+      startTime: session.streaming?.startedAt || null,
+      endTime: session.streaming?.endedAt || null,
+      youtubeWatchUrl: session.monitoring?.youtubeWatchUrl || null,
+      webRTCMonitorUrl: session.monitoring?.webrtcUrl || null,
+      audioSource: session.streaming?.audioSource || null,
+      videoBitrateK: session.streaming?.videoBitrateK || null,
+      audioBitrateK: session.streaming?.audioBitrateK || null,
+      fps: session.streaming?.fps || null,
+      primaryRtmpUrl: session.streaming?.primaryUrl || null,
+      backupRtmpUrl: session.streaming?.backupUrl || null,
+      health: session.health || null
+    });
+
+    // POST /api/streaming/youtube/start - Start YouTube streaming session
+    this.app.post('/api/streaming/youtube/start', async (req, res) => {
+      try {
+        if (!this.streamingController) {
+          return res.status(503).json({
+            success: false,
+            error: 'Streaming controller not initialized'
+          });
+        }
+
+        const options = {
+          streamKey: req.body.streamKey || process.env.PRIMARY_STREAM_KEY,
+          backupStreamKey: req.body.backupStreamKey || process.env.BACKUP_STREAM_KEY,
+          primaryUrl: req.body.primaryUrl || process.env.PRIMARY_RTMP_URL,
+          backupUrl: req.body.backupUrl || process.env.BACKUP_RTMP_URL,
+          audioSource: req.body.audioSource || process.env.MEDIA_BRIDGE_AUDIO_SOURCE,
+          audioToken: req.body.audioToken || process.env.MEDIA_BRIDGE_AUDIO_TOKEN || process.env.AUDIO_TOKEN,
+          videoBitrateK: req.body.videoBitrateK || req.body.videoBitrate || process.env.MEDIA_BRIDGE_VIDEO_BITRATE_K,
+          audioBitrateK: req.body.audioBitrateK || req.body.audioBitrate || process.env.MEDIA_BRIDGE_AUDIO_BITRATE_K,
+          fps: req.body.fps || process.env.MEDIA_BRIDGE_FPS,
+          srtUrl: req.body.srtUrl || process.env.MEDIA_BRIDGE_SRT_URL,
+          webrtcHost: req.body.webrtcHost,
+          webrtcPort: req.body.webrtcPort,
+          webrtcPath: req.body.webrtcPath,
+          youtubeWatchUrl: req.body.youtubeWatchUrl || process.env.YOUTUBE_WATCH_URL
+        };
+
+        console.log('🎥 Starting YouTube stream via API', {
+          primaryUrl: options.primaryUrl,
+          backupConfigured: Boolean(options.backupStreamKey),
+          audioSource: options.audioSource,
+          srtUrl: options.srtUrl,
+          videoBitrateK: options.videoBitrateK,
+          audioBitrateK: options.audioBitrateK,
+          fps: options.fps,
+          webrtcHost: options.webrtcHost,
+          webrtcPort: options.webrtcPort
+        });
+        const session = await this.streamingController.startYouTubeStream(options);
+
+        // Broadcast streaming status to dashboard clients
+        this.broadcast(DASHBOARD_EVENT_TYPES.STREAM_STATUS, {
+          status: session.status,
+          session: formatSession(session)
+        });
+
+        res.json({
+          success: true,
+          session: formatSession(session)
+        });
+
+      } catch (error) {
+        console.error('❌ Failed to start YouTube stream', error);
+        res.status(500).json({
+          success: false,
+          error: error.message
+        });
+      }
+    });
+
+    // POST /api/streaming/youtube/:sessionId/stop - Stop YouTube streaming session
+    this.app.post('/api/streaming/youtube/:sessionId/stop', async (req, res) => {
+      try {
+        if (!this.streamingController) {
+          return res.status(503).json({
+            success: false,
+            error: 'Streaming controller not initialized'
+          });
+        }
+
+        const { sessionId } = req.params;
+        console.log('🛑 Stopping YouTube stream via API', { sessionId });
+
+        const session = await this.streamingController.stopYouTubeStream(sessionId);
+
+        // Broadcast streaming status to dashboard clients
+        this.broadcast(DASHBOARD_EVENT_TYPES.STREAM_STATUS, {
+          status: session.status,
+          session: formatSession(session)
+        });
+
+        res.json({
+          success: true,
+          session: formatSession(session)
+        });
+
+      } catch (error) {
+        console.error('❌ Failed to stop YouTube stream', error);
+        res.status(500).json({
+          success: false,
+          error: error.message
+        });
+      }
+    });
+
+    // GET /api/streaming/youtube/:sessionId/status - Get session status
+    this.app.get('/api/streaming/youtube/:sessionId/status', async (req, res) => {
+      try {
+        if (!this.streamingController) {
+          return res.status(503).json({
+            success: false,
+            error: 'Streaming controller not initialized'
+          });
+        }
+
+        const { sessionId } = req.params;
+        const session = await this.streamingController.getSessionStatus(sessionId);
+
+        if (!session) {
+          return res.status(404).json({
+            success: false,
+            error: 'Session not found'
+          });
+        }
+
+        res.json({
+          success: true,
+          session: formatSession(session)
+        });
+
+      } catch (error) {
+        console.error('❌ Failed to get YouTube stream status', error);
+        res.status(500).json({
+          success: false,
+          error: error.message
+        });
+      }
+    });
+
+    // GET /api/streaming/youtube/sessions - List active sessions
+    this.app.get('/api/streaming/youtube/sessions', async (req, res) => {
+      try {
+        if (!this.streamingController) {
+          return res.status(503).json({
+            success: false,
+            error: 'Streaming controller not initialized'
+          });
+        }
+
+        const health = await this.streamingController.performHealthChecks();
+        this.streamingController.ensureSessionFromHealth(health);
+        const sessions = this.streamingController.getActiveSessions();
+
+        res.json({
+          success: true,
+          sessions: sessions.map(formatSession),
+          count: sessions.length
+        });
+
+      } catch (error) {
+        console.error('❌ Failed to list YouTube streams', error);
+        res.status(500).json({
+          success: false,
+          error: error.message
+        });
+      }
+    });
+
+    // GET /api/streaming/health - Get streaming system health
+    this.app.get('/api/streaming/health', async (req, res) => {
+      try {
+        if (!this.streamingController) {
+          return res.status(503).json({
+            success: false,
+            error: 'Streaming controller not initialized'
+          });
+        }
+
+        const health = await this.streamingController.performHealthChecks();
+        this.streamingController.ensureSessionFromHealth(health);
+        const overall = Array.isArray(health)
+          ? health.every(item => item.status === 'ok')
+          : false;
+
+        res.json({
+          success: true,
+          health: {
+            overall
+          },
+          details: health,
+          sessions: this.streamingController.getActiveSessions().map(formatSession)
+        });
+
+      } catch (error) {
+        console.error('❌ Streaming health check failed', error);
+        res.status(500).json({
+          success: false,
+          health: {
+            overall: false
+          },
+          details: [],
+          error: error.message
+        });
+      }
+    });
+
+    // GET /api/streaming/youtube/presets - Get quality presets
+    this.app.get('/api/streaming/youtube/presets', (req, res) => {
+      const presets = {
+        '720p30': {
+          name: '720p 30fps (HD)',
+          width: 1280,
+          height: 720,
+          fps: 30,
+          bitrate: 2500,
+          format: '720p'
+        },
+        '1080p30': {
+          name: '1080p 30fps (Full HD)',
+          width: 1920,
+          height: 1080,
+          fps: 30,
+          bitrate: 4000,
+          format: '1080p'
+        },
+        '1080p60': {
+          name: '1080p 60fps (Full HD)',
+          width: 1920,
+          height: 1080,
+          fps: 60,
+          bitrate: 6000,
+          format: '1080p'
+        }
+      };
+
+      res.json({
+        success: true,
+        presets
+      });
+    });
+  }
+
+  /**
    * Setup WebSocket server
    */
   _setupWebSocketServer() {
-    this.wss = new WebSocketServer({ server: this.server });
-
-    this.wss.on('connection', (ws, req) => {
-      this.clients.add(ws);
-
-      if (this.config.enableLogging) {
-        console.log(`🔌 Dashboard client connected (${this.clients.size} total)`);
-      }
-
-      // Send initial connection message
-      ws.send(JSON.stringify({
-        type: 'connection',
-        data: { status: 'connected', timestamp: Date.now() }
-      }));
-
-      // Handle messages from client
-      ws.on('message', (message) => {
-        try {
-          const data = JSON.parse(message.toString());
-          this._handleClientMessage(ws, data);
-        } catch (error) {
-          console.warn('Invalid WebSocket message:', error.message);
-        }
-      });
-
-      // Handle client disconnect
-      ws.on('close', () => {
-        this.clients.delete(ws);
-        if (this.config.enableLogging) {
-          console.log(`🔌 Dashboard client disconnected (${this.clients.size} remaining)`);
-        }
-      });
-
-      // Handle errors
-      ws.on('error', (error) => {
-        console.warn('WebSocket error:', error.message);
-        this.clients.delete(ws);
-      });
-    });
+    setupWebSocketServer(this.server);
   }
 
   /**

@@ -1,0 +1,14 @@
+{
+  "screenshot_file": "isaac_sim_20250922_102219.png",
+  "timestamp": "2025-09-22T10:22:20.328865",
+  "file_size_bytes": 597558,
+  "purpose": "Verify USD asset scaling with Xform containers - comparing original mug vs scaled container mug",
+  "tags": [
+    "scaling",
+    "xform-container",
+    "usd-assets",
+    "worldbuilder"
+  ],
+  "notes": "Testing the fix for USD asset scaling using proper Xform containers. Should show original large mug next to smaller scaled mug in container.",
+  "tool_used": "screenshot_isaac_sim"
+}

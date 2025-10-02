@@ -1,0 +1,14 @@
+{
+  "screenshot_file": "WorldSurveyor_Waypoint_Manager_-_Google_Chrome_20250919_084417.png",
+  "timestamp": "2025-09-19T08:44:18.154403",
+  "file_size_bytes": 266260,
+  "purpose": "Capture waypoint manager with actual groups to assess text contrast",
+  "tags": [
+    "waypoint-manager",
+    "groups-populated",
+    "text-contrast"
+  ],
+  "notes": null,
+  "tool_used": "screenshot_window",
+  "window_title": "WorldSurveyor Waypoint Manager - Google Chrome"
+}
