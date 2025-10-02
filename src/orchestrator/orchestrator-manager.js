@@ -3,6 +3,7 @@ import path from 'node:path';
 import { EventEmitter } from 'eventemitter3';
 
 import { DAGRunner } from './dag-runner.js';
+import { registerDefaultTypeHandlers } from './type-handlers/default-handlers.js';
 
 const DEFAULT_CONFIG_DIRECTORY = path.resolve('src', 'config', 'orchestrator');
 
@@ -15,10 +16,12 @@ export class OrchestratorManager extends EventEmitter {
     this.configDirectory = configDirectory || DEFAULT_CONFIG_DIRECTORY;
     this.logger = logger || console;
 
-    this.typeHandlers = new Map();
-    this.stageHandlers = new Map();
-    this.activeAdventures = new Map();
-  }
+	    this.typeHandlers = new Map();
+	    this.stageHandlers = new Map();
+	    this.activeAdventures = new Map();
+
+	    registerDefaultTypeHandlers(this);
+	  }
 
   registerTypeHandler(stageType, handlerFactory) {
     if (typeof handlerFactory !== 'function') {
