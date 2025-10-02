@@ -8,20 +8,21 @@ import { registerDefaultTypeHandlers } from './type-handlers/default-handlers.js
 const DEFAULT_CONFIG_DIRECTORY = path.resolve('src', 'config', 'orchestrator');
 
 export class OrchestratorManager extends EventEmitter {
-  constructor({ eventBus, storyState, configDirectory, logger } = {}) {
+  constructor({ eventBus, storyState, configDirectory, logger, mcpClients } = {}) {
     super();
 
     this.eventBus = eventBus;
     this.storyState = storyState;
     this.configDirectory = configDirectory || DEFAULT_CONFIG_DIRECTORY;
     this.logger = logger || console;
+    this.mcpClients = mcpClients || {};
 
-	    this.typeHandlers = new Map();
-	    this.stageHandlers = new Map();
-	    this.activeAdventures = new Map();
+    this.typeHandlers = new Map();
+    this.stageHandlers = new Map();
+    this.activeAdventures = new Map(); // adventureId -> { runner, promise }
 
-	    registerDefaultTypeHandlers(this);
-	  }
+    registerDefaultTypeHandlers(this);
+  }
 
   registerTypeHandler(stageType, handlerFactory) {
     if (typeof handlerFactory !== 'function') {

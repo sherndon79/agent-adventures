@@ -69,6 +69,52 @@ export function registerDefaultTypeHandlers(manager) {
   manager.registerTypeHandler('mcp:worldstreamer', mcpHandlerFactory);
   manager.registerTypeHandler('mcp:worldrecorder', mcpHandlerFactory);
 
+  manager.registerTypeHandler('system:scene-reset', (stage) => {
+    return async () => {
+      const results = {};
+      const errors = [];
+      const worldBuilder = manager.mcpClients?.worldBuilder;
+      const worldSurveyor = manager.mcpClients?.worldSurveyor;
+
+      if (worldBuilder?.clearScene) {
+        try {
+          const response = await worldBuilder.clearScene(stage.payload?.path || '/World', true);
+          results.worldBuilder = response;
+        } catch (error) {
+          errors.push(`WorldBuilder: ${error.message}`);
+          logger?.error?.('[Orchestrator] scene reset: worldBuilder failed', error);
+        }
+      }
+
+      if (worldSurveyor?.clearWaypoints) {
+        try {
+          const response = await worldSurveyor.clearWaypoints(true);
+          results.waypoints = response;
+        } catch (error) {
+          errors.push(`WorldSurveyor waypoints: ${error.message}`);
+          logger?.error?.('[Orchestrator] scene reset: clearWaypoints failed', error);
+        }
+      }
+
+      if (worldSurveyor?.clearGroups) {
+        try {
+          const response = await worldSurveyor.clearGroups(true);
+          results.groups = response;
+        } catch (error) {
+          errors.push(`WorldSurveyor groups: ${error.message}`);
+          logger?.error?.('[Orchestrator] scene reset: clearGroups failed', error);
+        }
+      }
+
+      if (errors.length) {
+        throw new Error(`Scene reset errors: ${errors.join('; ')}`);
+      }
+
+      logger?.info?.('[Orchestrator] Scene cleared before stage execution');
+      return { cleared: true, details: results };
+    };
+  });
+
   manager.registerTypeHandler('system:sleep', (stage) => {
     return async () => {
       const duration = Number(stage.durationMs || stage.budget?.timeMs || 1000);

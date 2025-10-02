@@ -305,6 +305,7 @@ class AdventuresPlatform {
       eventBus: this.eventBus,
       storyState: this.storyState,
       configDirectory: this.config.orchestrator.configDirectory,
+      mcpClients: this.mcpClientManager,
       logger: this.config.orchestrator.enableLogging === false
         ? {
             info: () => {},
