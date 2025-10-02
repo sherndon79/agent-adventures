@@ -11,7 +11,8 @@ import {
   updateMusic,
   sendCommentary,
   getStatus,
-  controlAudio
+  controlAudio,
+  listVoices
 } from '../controllers/audioController.js';
 
 const router = express.Router();
@@ -30,6 +31,9 @@ router.post('/commentary', sendCommentary);
 
 // Status endpoint
 router.get('/status', getStatus);
+
+// Voices endpoint
+router.get('/voices', listVoices);
 
 // Control endpoint (pause/resume/clear_queue)
 router.post('/control', controlAudio);

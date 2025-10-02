@@ -7,6 +7,89 @@
 
 import WebSocket from 'ws';
 
+const VOICE_PRESETS = [
+  {
+    id: 'af_sarah',
+    displayName: 'Sarah — Warm Narrator',
+    gender: 'female',
+    language: 'en-US',
+    range: 'alto',
+    style: 'Warm, expressive narration suitable for broad story beats.',
+    strengths: ['balanced pacing', 'emotional resonance', 'primary narration'],
+    defaultGainDb: 0
+  },
+  {
+    id: 'am_adam',
+    displayName: 'Adam — Confident Host',
+    gender: 'male',
+    language: 'en-US',
+    range: 'baritone',
+    style: 'Energetic delivery ideal for color commentary and hype moments.',
+    strengths: ['live commentary', 'audience calls-to-action', 'high-energy segments'],
+    defaultGainDb: -1
+  },
+  {
+    id: 'af_jade',
+    displayName: 'Jade — Mysterious Storyteller',
+    gender: 'female',
+    language: 'en-US',
+    range: 'mezzo soprano',
+    style: 'Soft-spoken with ethereal undertones that support mystery or dream-like scenes.',
+    strengths: ['ambient lore drops', 'whisper narration', 'mystery arcs'],
+    defaultGainDb: 1
+  },
+  {
+    id: 'am_daniel',
+    displayName: 'Daniel — Epic Announcer',
+    gender: 'male',
+    language: 'en-US',
+    range: 'bass',
+    style: 'Deep, resonant tone reminiscent of trailer voice-overs.',
+    strengths: ['boss introductions', 'arena announcements', 'dramatic reveals'],
+    defaultGainDb: 0
+  }
+];
+
+const VOICE_BLEND_PRESETS = [
+  {
+    id: 'balanced_host_duo',
+    name: 'Balanced Host Duo',
+    blend: [
+      { voiceId: 'af_sarah', weight: 0.5 },
+      { voiceId: 'am_adam', weight: 0.5 }
+    ],
+    description: 'Use for co-host segments where warmth and hype share equal footing.'
+  },
+  {
+    id: 'mysterious_narrator',
+    name: 'Mysterious Narrator',
+    blend: [
+      { voiceId: 'af_sarah', weight: 0.7 },
+      { voiceId: 'af_jade', weight: 0.3 }
+    ],
+    description: 'Adds Jade’s ethereal color to Sarah’s approachable narration.'
+  },
+  {
+    id: 'epic_highlight',
+    name: 'Epic Highlight',
+    blend: [
+      { voiceId: 'am_adam', weight: 0.4 },
+      { voiceId: 'am_daniel', weight: 0.6 }
+    ],
+    description: 'Great for climactic reveals or highlight reels that need extra weight.'
+  }
+];
+
+const VOICE_MIXING_GUIDE = {
+  syntax: 'voiceId:weight (comma separated). Example: af_sarah:60,am_adam:40',
+  notes: [
+    'Weights do not need to total 100; the mixer normalizes them automatically.',
+    'Keep blends to three voices or fewer to avoid muddiness.',
+    'Choose one primary voice (>= 0.6 weight) and use others for coloration.',
+    'Default gain adjustments should be respected when combining voices to maintain headroom.'
+  ]
+};
+
 // Store audio container connection
 let audioSocket = null;
 let dashboardSockets = new Set();
@@ -191,6 +274,18 @@ export function getAudioStatus() {
     connected: audioSocket && audioSocket.readyState === WebSocket.OPEN,
     timestamp: new Date().toISOString()
   };
+}
+
+/**
+ * List available voices and recommended blends
+ */
+export function listVoices(req, res) {
+  res.json({
+    voices: VOICE_PRESETS,
+    blends: VOICE_BLEND_PRESETS,
+    guide: VOICE_MIXING_GUIDE,
+    timestamp: new Date().toISOString()
+  });
 }
 
 /**
