@@ -5,13 +5,16 @@
  * Main application entry point
  */
 
+import path from 'node:path';
+import { pathToFileURL } from 'url';
+
 import { EventBus } from './core/event-bus.js';
 import { StoryState } from './core/story-state.js';
 import { AgentManager } from './core/agent-manager.js';
 import { CompetitionManager } from './core/competition-manager.js';
 import { WebServerService } from './services/web-server.js';
 import { MCPClientManager } from './services/mcp-clients/index.js';
-import { pathToFileURL } from 'url';
+import { OrchestratorManager } from './orchestrator/index.js';
 
 class AdventuresPlatform {
   constructor(config = {}) {
@@ -53,6 +56,14 @@ class AdventuresPlatform {
       platform: {
         gracefulShutdownTimeout: 10000,
         ...config.platform
+      },
+
+      orchestrator: {
+        configDirectory: path.resolve('src', 'config', 'orchestrator'),
+        autoStart: process.env.START_SAMPLE_DAG === 'true',
+        defaultAdventure: 'sample-adventure',
+        enableLogging: true,
+        ...config.orchestrator
       }
     };
 
@@ -66,6 +77,7 @@ class AdventuresPlatform {
     this.competitionManager = null;
     this.webServer = null;
     this.mcpClientManager = null;
+    this.orchestratorManager = null;
   }
 
   /**
@@ -154,6 +166,19 @@ class AdventuresPlatform {
       console.log(`   - Web Server: ${this.webServer.getStatus().running ? 'Running' : 'Stopped'} (port ${this.webServer.config.port})`);
       console.log(`   - Agents: ${successfulAgents.length} running`);
 
+      if (this.config.orchestrator.autoStart && this.orchestratorManager) {
+        const adventureId = this.config.orchestrator.defaultAdventure;
+        try {
+          const { promise } = await this.orchestratorManager.startAdventure(adventureId);
+          promise.catch((error) => {
+            console.error(`⚠️ Orchestrated adventure ${adventureId} ended with error:`, error);
+          });
+          console.log(`🎯 Orchestrator auto-started adventure: ${adventureId}`);
+        } catch (error) {
+          console.error('⚠️ Failed to auto-start orchestrated adventure:', error);
+        }
+      }
+
       return {
         success: true,
         agentsStarted: successfulAgents.length,
@@ -186,6 +211,10 @@ class AdventuresPlatform {
       if (this.agentManager) {
         await this.agentManager.stopAllAgents();
         await this.agentManager.shutdown();
+      }
+
+      if (this.orchestratorManager) {
+        await this.orchestratorManager.shutdown();
       }
 
       // Cleanup core components
@@ -271,6 +300,20 @@ class AdventuresPlatform {
     // Create web server with event bus integration
     this.webServer = new WebServerService(this.eventBus, this.config.webServer);
     console.log('   ✓ Web Server initialized');
+
+    this.orchestratorManager = new OrchestratorManager({
+      eventBus: this.eventBus,
+      storyState: this.storyState,
+      configDirectory: this.config.orchestrator.configDirectory,
+      logger: this.config.orchestrator.enableLogging === false
+        ? {
+            info: () => {},
+            log: () => {},
+            error: (...args) => console.error(...args)
+          }
+        : console
+    });
+    console.log('   ✓ Orchestrator Manager initialized');
   }
 
   /**
