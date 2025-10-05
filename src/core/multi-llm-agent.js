@@ -31,6 +31,7 @@ export class MultiLLMAgent extends BaseAgent {
     // Proposal management
     this.activeProposals = new Map(); // batchId -> proposalId
     this.proposalHistory = [];
+    this.proposalRegistry = new Map(); // proposalId -> Proposal
 
     // Agent-specific metrics
     this.competitionMetrics = {
@@ -48,6 +49,15 @@ export class MultiLLMAgent extends BaseAgent {
       mcpCalls: true,
       streaming: true,
       judgePanel: true
+    };
+
+    const now = Date.now();
+    this.tokenBudgetState = {
+      cycleUsed: 0,
+      cycleStartedAt: now,
+      dailyUsed: 0,
+      dailyStamp: this._getDayStamp(now),
+      lastUsageAt: null
     };
   }
 
@@ -107,6 +117,7 @@ export class MultiLLMAgent extends BaseAgent {
 
       // Track proposal
       this.activeProposals.set(batchId, proposal.id);
+      this.proposalRegistry.set(proposal.id, proposal);
       this.competitionMetrics.proposalsSubmitted++;
 
       // Emit proposal for batch collection
@@ -133,19 +144,24 @@ export class MultiLLMAgent extends BaseAgent {
       return; // Not our batch
     }
 
+    const proposal = this.proposalRegistry.get(proposalId);
+    if (!proposal) {
+      console.warn(`[${this.id}] Proposal ${proposalId} missing from registry during decision phase.`);
+    }
+
     const won = decision.winningAgentId === this.id;
 
     if (won) {
       this.competitionMetrics.proposalsWon++;
 
       // If we won, execute the proposal
-      await this._executeProposal(proposalId, decision);
+      await this._executeProposal(proposal, decision);
 
     } else {
       this.competitionMetrics.proposalsRejected++;
 
       // Learn from loss (optional - for future ML enhancement)
-      await this._handleProposalLoss(proposalId, decision);
+      await this._handleProposalLoss(proposal, decision);
     }
 
     // Update win rate
@@ -153,6 +169,9 @@ export class MultiLLMAgent extends BaseAgent {
 
     // Clean up
     this.activeProposals.delete(batchId);
+    if (proposalId) {
+      this.proposalRegistry.delete(proposalId);
+    }
 
     // Store in history
     this.proposalHistory.push({
@@ -160,6 +179,12 @@ export class MultiLLMAgent extends BaseAgent {
       proposalId,
       won,
       decision,
+      proposalSnapshot: proposal ? {
+        agentId: proposal.agentId,
+        proposalType: proposal.proposalType,
+        data: proposal.data,
+        reasoning: proposal.reasoning
+      } : null,
       timestamp: Date.now()
     });
 
@@ -308,6 +333,14 @@ export class MultiLLMAgent extends BaseAgent {
     try {
       const systemPrompt = this.systemPrompt || this._getDefaultSystemPrompt();
       const userPrompt = this._formatLLMPrompt(llmContext);
+      const responseFormat = this._getProposalResponseFormat(llmContext.proposalType);
+      const maxTokens = config.tokens.maxPerProposal;
+
+      const budgetAllowance = this._ensureTokenBudget(maxTokens);
+      if (!budgetAllowance.allowed) {
+        console.warn(`[${this.id}] Skipping ${this.llmModel} call: ${budgetAllowance.reason}`);
+        return this._budgetFallbackResponse(llmContext, budgetAllowance.reason);
+      }
 
       console.log(`[${this.id}] Making ${this.llmModel} API call...`);
 
@@ -315,11 +348,17 @@ export class MultiLLMAgent extends BaseAgent {
       const response = await this.llmClient.generateCompletion(
         systemPrompt,
         userPrompt,
-        { maxTokens: config.tokens.maxPerProposal }
+        {
+          maxTokens,
+          responseFormat
+        }
       );
 
       // Track token usage
-      this.competitionMetrics.totalTokensUsed = (this.competitionMetrics.totalTokensUsed || 0) + response.usage.totalTokens;
+      this._recordTokenUsage(response.usage);
+      const totalTokens = response.usage?.totalTokens
+        ?? ((response.usage?.promptTokens || 0) + (response.usage?.completionTokens || 0));
+      this.competitionMetrics.totalTokensUsed = (this.competitionMetrics.totalTokensUsed || 0) + totalTokens;
       this.competitionMetrics.totalCost = (this.competitionMetrics.totalCost || 0) + this._calculateCost(response.usage);
       this.competitionMetrics.averageResponseTime = Date.now() - startTime;
 
@@ -387,7 +426,18 @@ export class MultiLLMAgent extends BaseAgent {
     const { proposalType } = llmContext;
 
     try {
-      // Try to extract structured data from the response
+      const structured = this._deserializeLLMContent(content);
+      if (structured) {
+        const normalized = this._normalizeStructuredResponse(structured, proposalType);
+        if (normalized) {
+          return {
+            ...normalized,
+            rawResponse: structured
+          };
+        }
+      }
+
+      // Fallback to heuristic extraction from text content
       const data = this._extractStructuredData(content, proposalType);
       const reasoning = this._extractReasoning(content);
 
@@ -402,6 +452,363 @@ export class MultiLLMAgent extends BaseAgent {
       // Fallback to a basic structure
       return this._createFallbackResponse(content, proposalType);
     }
+  }
+
+  _deserializeLLMContent(content) {
+    if (!content) {
+      return null;
+    }
+
+    if (typeof content === 'object') {
+      return content;
+    }
+
+    if (typeof content !== 'string') {
+      return null;
+    }
+
+    const stripped = this._stripCodeFences(content);
+    if (!stripped) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(stripped);
+    } catch (error) {
+      // Attempt to parse substring containing JSON braces
+      const jsonStart = stripped.indexOf('{');
+      const jsonEnd = stripped.lastIndexOf('}');
+      if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
+        const candidate = stripped.slice(jsonStart, jsonEnd + 1);
+        try {
+          return JSON.parse(candidate);
+        } catch (innerError) {
+          return null;
+        }
+      }
+      return null;
+    }
+  }
+
+  _stripCodeFences(text) {
+    if (typeof text !== 'string') {
+      return '';
+    }
+
+    const trimmed = text.trim();
+    if (trimmed.startsWith('```')) {
+      const fenceEnd = trimmed.lastIndexOf('```');
+      if (fenceEnd > 3) {
+        return trimmed.slice(trimmed.indexOf('\n') + 1, fenceEnd).trim();
+      }
+    }
+    return trimmed;
+  }
+
+  _normalizeStructuredResponse(payload, proposalType) {
+    if (!payload || typeof payload !== 'object') {
+      return null;
+    }
+
+    const reasoning = payload.reasoning || payload.explanation || payload.analysis;
+    let data = payload.data || payload.parameters || payload.proposal || null;
+
+    if (!data && payload.action && payload.parameters) {
+      data = {
+        action: payload.action,
+        ...payload.parameters
+      };
+    }
+
+    if (!data || typeof data !== 'object') {
+      return null;
+    }
+
+    // Ensure element_type is present when provided via action context
+    if (!data.element_type && data.type) {
+      data.element_type = data.type;
+    }
+
+    const schema = this._getProposalSchema(proposalType);
+    if (schema) {
+      // Minimal validation: check that required properties exist
+      const required = schema.properties?.data?.required || [];
+      const missing = required.filter(key => data[key] === undefined);
+      if (missing.length > 0) {
+        return null;
+      }
+    }
+
+    return {
+      data,
+      reasoning: reasoning || 'LLM response (structured)'
+    };
+  }
+
+  _getProposalResponseFormat(proposalType) {
+    const schema = this._getProposalSchema(proposalType);
+
+    if (!schema) {
+      return null;
+    }
+
+    const example = this._getProposalExample(proposalType);
+    const name = `${proposalType}_response`.replace(/[^a-zA-Z0-9_]/g, '_');
+
+    return {
+      type: 'json_schema',
+      name,
+      strict: true,
+      schema,
+      ...(example ? { examples: [example] } : {})
+    };
+  }
+
+  _getProposalSchema(proposalType) {
+    switch (proposalType) {
+      case 'asset_placement':
+        return {
+          type: 'object',
+          additionalProperties: false,
+          required: ['data', 'reasoning'],
+          properties: {
+            data: {
+              type: 'object',
+              additionalProperties: true,
+              required: ['element_type', 'name', 'position'],
+              properties: {
+                element_type: { type: 'string' },
+                name: { type: 'string' },
+                position: {
+                  type: 'array',
+                  minItems: 3,
+                  maxItems: 3,
+                  items: { type: 'number' }
+                },
+                scale: {
+                  type: 'array',
+                  minItems: 3,
+                  maxItems: 3,
+                  items: { type: 'number' }
+                },
+                color: {
+                  type: 'array',
+                  minItems: 3,
+                  maxItems: 3,
+                  items: {
+                    type: 'number',
+                    minimum: 0,
+                    maximum: 1
+                  }
+                },
+                metadata: {
+                  type: 'object',
+                  additionalProperties: true
+                }
+              }
+            },
+            reasoning: { type: 'string' },
+            metadata: {
+              type: 'object',
+              additionalProperties: true
+            }
+          }
+        };
+
+      case 'camera_move':
+        return {
+          type: 'object',
+          additionalProperties: false,
+          required: ['data', 'reasoning'],
+          properties: {
+            data: {
+              type: 'object',
+              additionalProperties: true,
+              required: ['target_position', 'target_look_at', 'movement_duration'],
+              properties: {
+                target_position: {
+                  type: 'array',
+                  minItems: 3,
+                  maxItems: 3,
+                  items: { type: 'number' }
+                },
+                target_look_at: {
+                  type: 'array',
+                  minItems: 3,
+                  maxItems: 3,
+                  items: { type: 'number' }
+                },
+                movement_duration: { type: 'number', minimum: 0 }
+              }
+            },
+            reasoning: { type: 'string' },
+            metadata: {
+              type: 'object',
+              additionalProperties: true
+            }
+          }
+        };
+
+      case 'story_advance':
+        return {
+          type: 'object',
+          additionalProperties: false,
+          required: ['data', 'reasoning'],
+          properties: {
+            data: {
+              type: 'object',
+              additionalProperties: true,
+              required: ['story_beat', 'choices'],
+              properties: {
+                story_beat: { type: 'string' },
+                choices: {
+                  type: 'array',
+                  items: {
+                    oneOf: [
+                      { type: 'string' },
+                      {
+                        type: 'object',
+                        additionalProperties: true,
+                        required: ['id', 'text'],
+                        properties: {
+                          id: { type: 'string' },
+                          text: { type: 'string' },
+                          consequence: { type: 'string' }
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            reasoning: { type: 'string' },
+            metadata: {
+              type: 'object',
+              additionalProperties: true
+            }
+          }
+        };
+
+      default:
+        return null;
+    }
+  }
+
+  _getProposalExample(proposalType) {
+    switch (proposalType) {
+      case 'asset_placement':
+        return {
+          data: {
+            element_type: 'cube',
+            name: 'hero_statue',
+            position: [2.0, -1.5, 0.4],
+            scale: [1.2, 1.2, 1.2],
+            color: [0.7, 0.6, 0.5],
+            metadata: {
+              sync_id: 'scene_intro'
+            }
+          },
+          reasoning: 'Places hero statue near plaza entrance to anchor the reveal scene.'
+        };
+
+      case 'camera_move':
+        return {
+          data: {
+            target_position: [4.5, -3.2, 2.1],
+            target_look_at: [0, 0, 1.5],
+            movement_duration: 2.5
+          },
+          reasoning: 'Sweeps toward the artifact to highlight magical glow while maintaining viewer orientation.'
+        };
+
+      case 'story_advance':
+        return {
+          data: {
+            story_beat: 'artifact_choice',
+            choices: [
+              { id: 'investigate', text: 'Approach the artifact closely', consequence: 'risk_high_reward' },
+              { id: 'observe', text: 'Study from a distance', consequence: 'info_gain' },
+              { id: 'retreat', text: 'Call for reinforcements', consequence: 'delay' }
+            ]
+          },
+          reasoning: 'Offers three divergent paths balancing danger, information, and safety for audience voting.'
+        };
+
+      default:
+        return null;
+    }
+  }
+
+  _ensureTokenBudget(requestedTokens) {
+    if (!config.tokens.enforceBudgets) {
+      return { allowed: true };
+    }
+
+    this._refreshTokenWindows();
+
+    const { cycleBudget, dailyBudget } = config.tokens;
+
+    if (cycleBudget > 0 && requestedTokens > cycleBudget) {
+      return { allowed: false, reason: 'requested tokens exceed cycle budget' };
+    }
+
+    if (cycleBudget > 0 && this.tokenBudgetState.cycleUsed + requestedTokens > cycleBudget) {
+      return { allowed: false, reason: 'cycle token budget exceeded' };
+    }
+
+    if (dailyBudget > 0 && this.tokenBudgetState.dailyUsed + requestedTokens > dailyBudget) {
+      return { allowed: false, reason: 'daily token budget exceeded' };
+    }
+
+    return { allowed: true };
+  }
+
+  _refreshTokenWindows() {
+    const now = Date.now();
+
+    if (config.tokens.cycleWindowMs > 0) {
+      const elapsed = now - this.tokenBudgetState.cycleStartedAt;
+      if (elapsed >= config.tokens.cycleWindowMs) {
+        this.tokenBudgetState.cycleStartedAt = now;
+        this.tokenBudgetState.cycleUsed = 0;
+      }
+    }
+
+    const currentStamp = this._getDayStamp(now);
+    if (currentStamp !== this.tokenBudgetState.dailyStamp) {
+      this.tokenBudgetState.dailyStamp = currentStamp;
+      this.tokenBudgetState.dailyUsed = 0;
+    }
+  }
+
+  _recordTokenUsage(usage = {}) {
+    if (!config.tokens.enableTracking) {
+      return;
+    }
+
+    const total = usage.totalTokens
+      ?? ((usage.promptTokens || 0) + (usage.completionTokens || 0));
+
+    if (!total || total <= 0) {
+      return;
+    }
+
+    this.tokenBudgetState.cycleUsed += total;
+    this.tokenBudgetState.dailyUsed += total;
+    this.tokenBudgetState.lastUsageAt = Date.now();
+  }
+
+  _getDayStamp(reference = Date.now()) {
+    return new Date(reference).toISOString().slice(0, 10);
+  }
+
+  _budgetFallbackResponse(llmContext, reason) {
+    const fallback = this._mockLLMResponse(llmContext);
+    fallback.reasoning = `${fallback.reasoning} (fallback due to ${reason})`;
+    return {
+      ...fallback,
+      rawResponse: { fallback: true, reason }
+    };
   }
 
   /**
@@ -506,6 +913,10 @@ export class MultiLLMAgent extends BaseAgent {
    * Extract reasoning from LLM response
    */
   _extractReasoning(content) {
+    if (content && typeof content === 'object') {
+      return content.reasoning || content.explanation || content.analysis || 'Structured response';
+    }
+
     // Look for reasoning section
     const reasoningMatch = content.match(/reasoning[:\s]*([^$]+)/i) ||
                           content.match(/because[:\s]*([^$]+)/i) ||
@@ -705,16 +1116,17 @@ export class MultiLLMAgent extends BaseAgent {
   /**
    * Execute winning proposal via MCP
    */
-  async _executeProposal(proposalId, decision) {
-    // Find the proposal in our history or recreate context
-    console.log(`[${this.id}] Executing winning proposal: ${proposalId}`);
+  async _executeProposal(proposalOrId, decision) {
+    const proposalId = typeof proposalOrId === 'string'
+      ? proposalOrId
+      : proposalOrId?.id;
 
-    // Implementation would execute via appropriate MCP client
-    // This is where the actual Isaac Sim commands would be sent
+    console.log(`[${this.id}] Executing winning proposal: ${proposalId}`);
 
     this.emitEvent('agent:proposal_executed', {
       agentId: this.id,
       proposalId,
+      proposal: typeof proposalOrId === 'object' ? proposalOrId : null,
       decision
     });
   }
@@ -722,9 +1134,15 @@ export class MultiLLMAgent extends BaseAgent {
   /**
    * Handle proposal loss - learn for future improvements
    */
-  async _handleProposalLoss(proposalId, decision) {
+  async _handleProposalLoss(proposalOrId, decision) {
+    const proposalId = typeof proposalOrId === 'string'
+      ? proposalOrId
+      : proposalOrId?.id;
     // Optional: Store loss information for future ML training
     console.log(`[${this.id}] Proposal lost to ${decision.winningAgentId}: ${decision.reasoning}`);
+    if (proposalId) {
+      console.log(`[${this.id}] Losing proposal id: ${proposalId}`);
+    }
   }
 
   // ========== Agent Lifecycle Overrides ==========

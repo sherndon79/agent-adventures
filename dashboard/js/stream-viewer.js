@@ -12,6 +12,7 @@ class StreamViewer {
     this.healthDetails = [];
 
     this.streamContainer = document.getElementById('stream-player');
+    this.launchAdventureButton = document.getElementById('launch-adventure');
     if (this.streamContainer) {
       this.showStreamPlaceholder(this.streamContainer);
     }
@@ -47,6 +48,10 @@ class StreamViewer {
     if (stopButton) {
       stopButton.addEventListener('click', () => this.stopStream());
     }
+
+    if (this.launchAdventureButton) {
+      this.launchAdventureButton.addEventListener('click', () => this.launchAdventure());
+    }
   }
 
   async startStream() {
@@ -74,6 +79,47 @@ class StreamViewer {
     } catch (error) {
       console.error('Error stopping stream:', error);
       this.dashboard.logActivity('error', 'CONTROL', `Stop stream failed: ${error.message}`);
+    }
+  }
+
+  async launchAdventure() {
+    if (!this.launchAdventureButton) return;
+
+    const payload = {
+      adventureId: 'sample-adventure',
+      initialContext: {
+        story: {
+          beat: 'A cosmic convergence over the Aetheric Spire',
+          location: 'Central plaza of the floating city',
+          activeCharacters: ['Liora', 'Bram', 'Elder Keth'],
+          conflict: 'Channeling the spire without fracturing reality'
+        }
+      }
+    };
+
+    this.launchAdventureButton.disabled = true;
+    this.launchAdventureButton.textContent = 'Launching…';
+
+    try {
+      const response = await fetch('/api/orchestrator/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || `Failed to launch adventure (${response.status})`);
+      }
+
+      const data = await response.json().catch(() => ({}));
+      this.dashboard.logActivity('orchestrator', 'CONTROL', `Adventure launch requested: ${data.adventureId || payload.adventureId}`);
+    } catch (error) {
+      console.error('Error launching adventure:', error);
+      this.dashboard.logActivity('error', 'ORCHESTRATOR', `Launch failed: ${error.message}`);
+    } finally {
+      this.launchAdventureButton.disabled = false;
+      this.launchAdventureButton.textContent = 'Launch Adventure';
     }
   }
 

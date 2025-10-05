@@ -34,7 +34,7 @@ export class OrchestratorMockHandlers {
   }
 
   _handleLlm(event) {
-    const { payload } = event || {};
+    const payload = this._extractPayload(event);
     if (!payload?.requestId) {
       return;
     }
@@ -42,7 +42,7 @@ export class OrchestratorMockHandlers {
     const { requestId, stageId, stageConfig } = payload;
     const mockText = stageConfig?.mockResponse || `Mock response for stage ${stageId || 'unknown'}`;
 
-    this._emit('orchestrator:llm:result', {
+    this.eventBus.emit('orchestrator:llm:result', {
       requestId,
       stageId,
       result: {
@@ -59,13 +59,13 @@ export class OrchestratorMockHandlers {
   }
 
   _handleAudio(event) {
-    const { payload } = event || {};
+    const payload = this._extractPayload(event);
     if (!payload?.requestId) {
       return;
     }
 
     const { requestId, stageId, stageConfig } = payload;
-    this._emit('orchestrator:audio:result', {
+    this.eventBus.emit('orchestrator:audio:result', {
       requestId,
       stageId,
       result: {
@@ -77,13 +77,13 @@ export class OrchestratorMockHandlers {
   }
 
   _handleMcp(event) {
-    const { payload } = event || {};
+    const payload = this._extractPayload(event);
     if (!payload?.requestId) {
       return;
     }
 
     const { requestId, stageId, mcpService, stageConfig } = payload;
-    this._emit('orchestrator:mcp:result', {
+    this.eventBus.emit('orchestrator:mcp:result', {
       requestId,
       stageId,
       result: {
@@ -94,8 +94,17 @@ export class OrchestratorMockHandlers {
     });
   }
 
-  _emit(type, payload) {
-    this.eventBus.emit(type, { type, payload, timestamp: Date.now() });
+  _extractPayload(event) {
+    if (!event) {
+      return null;
+    }
+
+    const { payload } = event;
+    if (payload && typeof payload === 'object' && 'payload' in payload) {
+      return payload.payload;
+    }
+
+    return payload || null;
   }
 }
 

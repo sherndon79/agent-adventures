@@ -15,6 +15,7 @@ import { CompetitionManager } from './core/competition-manager.js';
 import { WebServerService } from './services/web-server.js';
 import { MCPClientManager } from './services/mcp-clients/index.js';
 import { OrchestratorManager } from './orchestrator/index.js';
+import YouTubeChatListener from './services/youtube/youtube-chat-listener.js';
 
 class AdventuresPlatform {
   constructor(config = {}) {
@@ -64,6 +65,19 @@ class AdventuresPlatform {
         defaultAdventure: 'sample-adventure',
         enableLogging: true,
         enableMockHandlers: process.env.ORCHESTRATOR_MOCK_HANDLERS !== 'false',
+        enableLlmResponder: process.env.ORCHESTRATOR_LLM_RESPONDER === 'true',
+        enableMcpResponder:
+          process.env.ORCHESTRATOR_MCP_RESPONDER === 'true'
+          || (
+            process.env.ORCHESTRATOR_MCP_RESPONDER !== 'false'
+            && process.env.ORCHESTRATOR_MOCK_HANDLERS === 'false'
+          ),
+        enableAudioResponder:
+          process.env.ORCHESTRATOR_AUDIO_RESPONDER === 'true'
+          || (
+            process.env.ORCHESTRATOR_AUDIO_RESPONDER !== 'false'
+            && process.env.ORCHESTRATOR_MOCK_HANDLERS === 'false'
+          ),
         ...config.orchestrator
       }
     };
@@ -80,6 +94,10 @@ class AdventuresPlatform {
     this.mcpClientManager = null;
     this.orchestratorManager = null;
     this.orchestratorMockHandlers = null;
+    this.orchestratorLlmResponder = null;
+    this.orchestratorMcpResponder = null;
+    this.orchestratorAudioResponder = null;
+    this.youtubeChatListener = null;
   }
 
   /**
@@ -219,6 +237,22 @@ class AdventuresPlatform {
         await this.orchestratorMockHandlers.shutdown();
       }
 
+      if (this.orchestratorLlmResponder?.shutdown) {
+        await this.orchestratorLlmResponder.shutdown();
+      }
+
+      if (this.orchestratorMcpResponder?.shutdown) {
+        await this.orchestratorMcpResponder.shutdown();
+      }
+
+      if (this.orchestratorAudioResponder?.shutdown) {
+        await this.orchestratorAudioResponder.shutdown();
+      }
+
+      if (this.youtubeChatListener) {
+        await this.youtubeChatListener.stop();
+      }
+
       if (this.orchestratorManager) {
         await this.orchestratorManager.shutdown();
       }
@@ -322,12 +356,66 @@ class AdventuresPlatform {
     });
     console.log('   ✓ Orchestrator Manager initialized');
 
+    this.webServer?.attachOrchestrator?.(this.orchestratorManager);
+    if (this.config.orchestrator?.defaultAdventure) {
+      this.webServer.config.defaultAdventure = this.config.orchestrator.defaultAdventure;
+    }
+
     if (this.config.orchestrator.enableMockHandlers) {
       const { OrchestratorMockHandlers } = await import('./services/orchestrator/mock-handlers.js');
       this.orchestratorMockHandlers = new OrchestratorMockHandlers({
         eventBus: this.eventBus
       });
       console.log('   ✓ Orchestrator mock handlers attached');
+    }
+
+    if (this.config.orchestrator.enableLlmResponder) {
+      const { OrchestratorLLMResponder } = await import('./services/orchestrator/llm-responder.js');
+      this.orchestratorLlmResponder = new OrchestratorLLMResponder({
+        eventBus: this.eventBus
+      });
+      console.log('   ✓ Orchestrator LLM responder attached');
+    }
+
+    if (this.config.orchestrator.enableMcpResponder) {
+      const { OrchestratorMCPResponder } = await import('./services/orchestrator/mcp-responder.js');
+      const responderLogger = this.config.orchestrator.enableLogging === false
+        ? { info: () => {}, warn: () => {}, error: (...args) => console.error(...args) }
+        : console;
+      this.orchestratorMcpResponder = new OrchestratorMCPResponder({
+        eventBus: this.eventBus,
+        mcpClients: this.mcpClientManager,
+        logger: responderLogger
+      });
+      console.log('   ✓ Orchestrator MCP responder attached');
+    }
+
+    if (this.config.orchestrator.enableAudioResponder) {
+      const { OrchestratorAudioResponder } = await import('./services/orchestrator/audio-responder.js');
+      const responderLogger = this.config.orchestrator.enableLogging === false
+        ? { info: () => {}, warn: () => {}, error: (...args) => console.error(...args) }
+        : console;
+      this.orchestratorAudioResponder = new OrchestratorAudioResponder({
+        eventBus: this.eventBus,
+        logger: responderLogger
+      });
+      console.log('   ✓ Orchestrator audio responder attached');
+    }
+
+    const chatApiKey = process.env.YOUTUBE_API_KEY;
+    const chatBroadcastId = process.env.YOUTUBE_LIVE_BROADCAST_ID;
+    if (chatApiKey && chatBroadcastId) {
+      const defaultInterval = Number.parseInt(process.env.YOUTUBE_CHAT_POLL_INTERVAL_MS || '5000', 10);
+      this.youtubeChatListener = new YouTubeChatListener({
+        eventBus: this.eventBus,
+        apiKey: chatApiKey,
+        broadcastId: chatBroadcastId,
+        pollIntervalMs: Number.isNaN(defaultInterval) ? 5000 : defaultInterval
+      });
+      await this.youtubeChatListener.start();
+      console.log('   ✓ YouTube chat listener initialized');
+    } else {
+      console.log('   ℹ️ YouTube chat listener disabled (missing YOUTUBE_API_KEY or YOUTUBE_LIVE_BROADCAST_ID)');
     }
   }
 
@@ -350,6 +438,31 @@ class AdventuresPlatform {
         console.log(`📝 State changed: ${change.path} =`, change.newValue);
       });
     }
+
+    this.eventBus.subscribe('chat:selection', (event) => {
+      const payload = event.payload;
+      if (!payload || typeof payload.choice !== 'number') {
+        return;
+      }
+
+      console.log('🗳️ Chat selection received:', payload);
+
+      this.storyState.updateState('audience.pending_votes', (current = []) => {
+        const entry = {
+          platform: payload.platform || 'youtube',
+          choice: payload.choice,
+          author: payload.author || 'unknown',
+          messageId: payload.messageId || null,
+          receivedAt: payload.publishedAt || new Date().toISOString()
+        };
+
+        const next = Array.isArray(current) ? [...current, entry] : [entry];
+        if (next.length > 100) {
+          next.splice(0, next.length - 100);
+        }
+        return next;
+      }, { source: 'chat-selection' });
+    });
 
     console.log('   ✓ Event handlers set up');
   }

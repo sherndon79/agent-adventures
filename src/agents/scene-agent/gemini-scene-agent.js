@@ -42,34 +42,6 @@ export class GeminiSceneAgent extends SceneAgent {
   }
 
   /**
-   * Gemini-specific bold visual approach
-   */
-  _generateModelSpecificProposal(context) {
-    const { requirements, spatialContext, position, assetProperties } = context;
-
-    // Gemini's dynamic visual strategy
-    const visualStrategy = this._determineVisualStrategy(spatialContext, position);
-    const compositionEffect = this._calculateCompositionEffect(spatialContext, assetProperties);
-
-    const boldPlacement = `${assetProperties.element_type}[${position.map(p => p.toFixed(1)).join(',')}] scale[${assetProperties.scale?.map(s => s.toFixed(1)).join(',') || '1.5,1.5,1.5'}] color[${assetProperties.color?.map(c => c.toFixed(1)).join(',') || '1.0,0.3,0.1'}]`;
-
-    const visualReasoning = this._craftVisualReasoning(requirements, spatialContext, position);
-
-    return {
-      reasoning: `Dynamic: ${visualStrategy} | Bold: ${boldPlacement} | Impact: ${visualReasoning} | Energy: ${compositionEffect}`,
-      additionalData: {
-        metadata: {
-          visual_strategy: visualStrategy,
-          composition_type: 'dynamic',
-          risk_level: 'calculated_bold',
-          gemini_approach: 'visual_impact_maximization',
-          dramatic_elements: this._identifyDramaticElements(position, assetProperties)
-        }
-      }
-    };
-  }
-
-  /**
    * Determine visual strategy based on spatial context
    */
   _determineVisualStrategy(spatialContext, position) {
@@ -130,28 +102,6 @@ export class GeminiSceneAgent extends SceneAgent {
   /**
    * Craft visual reasoning for Gemini's bold approach
    */
-  _craftVisualReasoning(requirements, spatialContext, position) {
-    const visualElements = [];
-
-    // Emphasize bold choices
-    if (position[2] > 1.5) {
-      visualElements.push('elevated for dramatic silhouette');
-    }
-
-    // Highlight composition benefits
-    if (spatialContext.nearbyCount > 0) {
-      visualElements.push(`creates dynamic relationship with ${spatialContext.nearbyCount} nearby elements`);
-    } else {
-      visualElements.push('establishes commanding focal point');
-    }
-
-    // Connect to purpose
-    const purpose = requirements.purpose || 'visual';
-    visualElements.push(`maximizes ${purpose} impact for streaming audience`);
-
-    return visualElements.join(', ') || 'enhances visual composition';
-  }
-
   /**
    * Identify dramatic elements in the placement
    */

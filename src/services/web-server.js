@@ -21,6 +21,7 @@ import {
 } from './dashboard/dashboard-event-adapter.js';
 import streamRoutes from '../routes/streamRoutes.js';
 import audioRoutes from '../routes/audioRoutes.js';
+import ambientRoutes from '../routes/ambientRoutes.js';
 import { setupWebSocketServer } from '../controllers/streamController.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -49,6 +50,7 @@ export class WebServerService {
       streaming: true,
       judgePanel: true
     };
+    this.orchestratorManager = null;
   }
 
   /**
@@ -64,8 +66,9 @@ export class WebServerService {
       this.app.use(express.static(this.config.dashboardPath));
 
       // API Routes
-      this._setupApiRoutes();
-      this._setupStreamingRoutes();
+    this._setupApiRoutes();
+    this._setupStreamingRoutes();
+    this._setupAmbientRoutes();
 
       // Create HTTP server
       this.server = createServer(this.app);
@@ -297,10 +300,66 @@ export class WebServerService {
       }
     });
 
+    this.app.post('/api/orchestrator/start', async (req, res) => {
+      if (!this.orchestratorManager) {
+        return res.status(503).json({
+          success: false,
+          error: 'Orchestrator manager not available'
+        });
+      }
+
+      const adventureId = req.body?.adventureId || this.config.defaultAdventure || 'sample-adventure';
+      const initialContext = req.body?.initialContext || {};
+      const autoReset = req.body?.autoReset !== undefined ? !!req.body.autoReset : true;
+
+      const alreadyRunning = this.orchestratorManager
+        .getActiveAdventures()
+        .some(({ id }) => id === adventureId);
+
+      if (alreadyRunning) {
+        return res.status(409).json({
+          success: false,
+          error: `Adventure ${adventureId} is already running`
+        });
+      }
+
+      try {
+        const { promise } = await this.orchestratorManager.startAdventure(adventureId, {
+          initialContext,
+          autoReset
+        });
+
+        promise
+          .then(() => {
+            console.log(`🎬 Adventure ${adventureId} completed`);
+          })
+          .catch((error) => {
+            console.error(`⚠️ Adventure ${adventureId} ended with error:`, error);
+          });
+
+        res.status(202).json({
+          success: true,
+          adventureId,
+          initialContext
+        });
+      } catch (error) {
+        console.error('❌ Failed to start orchestrated adventure:', error);
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
     // Dashboard route (fallback)
     this.app.get('/', (req, res) => {
       res.sendFile(join(this.config.dashboardPath, 'index.html'));
     });
+  }
+
+  _setupAmbientRoutes() {
+    this.app.use('/api/audio/ambient', ambientRoutes);
+  }
+
+  attachOrchestrator(orchestratorManager) {
+    this.orchestratorManager = orchestratorManager;
   }
 
   /**

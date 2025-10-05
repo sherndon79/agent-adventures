@@ -20,7 +20,13 @@ export function registerDefaultTypeHandlers(manager) {
 
       return waitForEvent(eventBus, 'orchestrator:llm:result', timeout, (event) => {
         return event?.payload?.requestId === requestId;
-      }).then((event) => event.payload.result);
+      }).then((event) => {
+        const result = event?.payload?.result;
+        if (result?.error) {
+          throw new Error(result.error);
+        }
+        return result;
+      });
     };
   });
 
@@ -39,7 +45,13 @@ export function registerDefaultTypeHandlers(manager) {
 
       return waitForEvent(eventBus, 'orchestrator:audio:result', timeout, (event) => {
         return event?.payload?.requestId === requestId;
-      }).then(event => event.payload.result);
+      }).then(event => {
+        const result = event?.payload?.result;
+        if (result?.error) {
+          throw new Error(result.error);
+        }
+        return result;
+      });
     };
   });
 
@@ -59,7 +71,13 @@ export function registerDefaultTypeHandlers(manager) {
 
       return waitForEvent(eventBus, 'orchestrator:mcp:result', timeout, (event) => {
         return event?.payload?.requestId === requestId;
-      }).then(event => event.payload.result);
+      }).then(event => {
+        const result = event?.payload?.result;
+        if (result?.error) {
+          throw new Error(result.error);
+        }
+        return result;
+      });
     };
   };
 
@@ -68,6 +86,76 @@ export function registerDefaultTypeHandlers(manager) {
   manager.registerTypeHandler('mcp:worldsurveyor', mcpHandlerFactory);
   manager.registerTypeHandler('mcp:worldstreamer', mcpHandlerFactory);
   manager.registerTypeHandler('mcp:worldrecorder', mcpHandlerFactory);
+
+  manager.registerTypeHandler('competition', (stage) => {
+    return () => {
+      const batchId = stage.batchId || buildRequestId(stage.id);
+      const proposalType = stage.payload?.proposalType
+        || stage.payload?.type
+        || stage.proposalType
+        || 'asset_placement';
+      const agentTypeMapping = {
+        asset_placement: 'scene',
+        camera_move: 'camera',
+        story_advance: 'story'
+      };
+      const agentType = stage.payload?.agentType || agentTypeMapping[proposalType] || 'scene';
+
+      const proposalTimeout = stage.budget?.proposalTimeoutMs || stage.budget?.timeMs || DEFAULT_TIMEOUT_MS * 2;
+      const executionTimeout = stage.budget?.executionTimeoutMs || DEFAULT_TIMEOUT_MS;
+      const totalTimeout = proposalTimeout + executionTimeout;
+
+      emit(eventBus, 'proposal:request', {
+        batchId,
+        agentType,
+        proposalType,
+        context: {
+          source: 'orchestrator',
+          stageId: stage.id,
+          adventureId: stage.adventureId,
+          payload: stage.payload || {}
+        },
+        deadline: Date.now() + proposalTimeout,
+        timestamp: Date.now()
+      });
+
+      emit(eventBus, 'competition:start', {
+        batchId,
+        type: proposalType,
+        timestamp: Date.now(),
+        stageId: stage.id,
+        proposalTimeout,
+        executionTimeout,
+        expectedAgents: stage.payload?.expectedAgents || [],
+        context: {
+          stagePayload: stage.payload || {},
+          metadata: stage.metadata || {},
+          orchestrator: {
+            stageId: stage.id,
+            adventureId: stage.adventureId
+          }
+        }
+      });
+
+      return waitForEvent(eventBus, 'competition:completed', totalTimeout, (event) => {
+        return event?.payload?.batchId === batchId;
+      }).then((event) => {
+        const payload = event?.payload || {};
+        const result = payload.result || {};
+        if (result.error) {
+          throw new Error(result.error);
+        }
+        return {
+          batchId,
+          winner: result.winner,
+          executed: result.executed,
+          winningProposal: result.winningProposal,
+          context: payload.context || {},
+          executionPayload: result.executionPayload || null
+        };
+      });
+    };
+  });
 
   manager.registerTypeHandler('system:scene-reset', (stage) => {
     return async () => {

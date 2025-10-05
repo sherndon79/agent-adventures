@@ -8,85 +8,157 @@
 import WebSocket from 'ws';
 
 const VOICE_PRESETS = [
+  // Grade A voices - Highest quality
   {
-    id: 'af_sarah',
-    displayName: 'Sarah — Warm Narrator',
+    id: 'af_heart',
+    displayName: 'Heart — Premium Narrator',
     gender: 'female',
     language: 'en-US',
-    range: 'alto',
-    style: 'Warm, expressive narration suitable for broad story beats.',
-    strengths: ['balanced pacing', 'emotional resonance', 'primary narration'],
+    grade: 'A',
+    style: 'Top-tier quality, warm and expressive. Perfect for primary narration.',
+    strengths: ['highest quality', 'emotional depth', 'primary narration'],
     defaultGainDb: 0
   },
+  {
+    id: 'af_bella',
+    displayName: 'Bella — Engaging Storyteller',
+    gender: 'female',
+    language: 'en-US',
+    grade: 'A-',
+    style: 'Near-premium quality with rich, engaging delivery.',
+    strengths: ['story arcs', 'character voices', 'dramatic moments'],
+    defaultGainDb: 0
+  },
+  // Grade B-C+ voices - Good quality
+  {
+    id: 'af_nicole',
+    displayName: 'Nicole — Versatile Voice',
+    gender: 'female',
+    language: 'en-US',
+    grade: 'B-',
+    style: 'Solid quality, versatile for various narrative styles.',
+    strengths: ['balanced tone', 'flexibility', 'general narration'],
+    defaultGainDb: 0
+  },
+  {
+    id: 'af_aoede',
+    displayName: 'Aoede — Melodic Narrator',
+    gender: 'female',
+    language: 'en-US',
+    grade: 'C+',
+    style: 'Pleasant melodic quality, good for lighter moments.',
+    strengths: ['upbeat segments', 'casual narration', 'transitions'],
+    defaultGainDb: 0
+  },
+  {
+    id: 'af_kore',
+    displayName: 'Kore — Mysterious Voice',
+    gender: 'female',
+    language: 'en-US',
+    grade: 'C+',
+    style: 'Ethereal undertones, great for mystery and atmosphere.',
+    strengths: ['ambient lore', 'mystery arcs', 'dramatic reveals'],
+    defaultGainDb: 0
+  },
+  {
+    id: 'am_fenrir',
+    displayName: 'Fenrir — Strong Announcer',
+    gender: 'male',
+    language: 'en-US',
+    grade: 'C+',
+    style: 'Commanding presence, ideal for announcements and intensity.',
+    strengths: ['arena announcements', 'boss introductions', 'epic moments'],
+    defaultGainDb: 0
+  },
+  {
+    id: 'am_michael',
+    displayName: 'Michael — Confident Host',
+    gender: 'male',
+    language: 'en-US',
+    grade: 'C+',
+    style: 'Steady, confident delivery for hosting and commentary.',
+    strengths: ['live commentary', 'hosting segments', 'analysis'],
+    defaultGainDb: 0
+  },
+  {
+    id: 'am_puck',
+    displayName: 'Puck — Energetic Commentator',
+    gender: 'male',
+    language: 'en-US',
+    grade: 'C+',
+    style: 'Upbeat and energetic, perfect for hype moments.',
+    strengths: ['high-energy segments', 'audience calls-to-action', 'excitement'],
+    defaultGainDb: 0
+  },
+  // Legacy voices for compatibility
   {
     id: 'am_adam',
-    displayName: 'Adam — Confident Host',
+    displayName: 'Adam — Basic Host',
     gender: 'male',
     language: 'en-US',
-    range: 'baritone',
-    style: 'Energetic delivery ideal for color commentary and hype moments.',
-    strengths: ['live commentary', 'audience calls-to-action', 'high-energy segments'],
+    grade: 'F+',
+    style: 'Basic quality, use only for testing or fallback.',
+    strengths: ['compatibility', 'fallback option'],
     defaultGainDb: -1
-  },
-  {
-    id: 'af_jade',
-    displayName: 'Jade — Mysterious Storyteller',
-    gender: 'female',
-    language: 'en-US',
-    range: 'mezzo soprano',
-    style: 'Soft-spoken with ethereal undertones that support mystery or dream-like scenes.',
-    strengths: ['ambient lore drops', 'whisper narration', 'mystery arcs'],
-    defaultGainDb: 1
-  },
-  {
-    id: 'am_daniel',
-    displayName: 'Daniel — Epic Announcer',
-    gender: 'male',
-    language: 'en-US',
-    range: 'bass',
-    style: 'Deep, resonant tone reminiscent of trailer voice-overs.',
-    strengths: ['boss introductions', 'arena announcements', 'dramatic reveals'],
-    defaultGainDb: 0
   }
 ];
 
 const VOICE_BLEND_PRESETS = [
   {
-    id: 'balanced_host_duo',
-    name: 'Balanced Host Duo',
+    id: 'premium_narrator',
+    name: 'Premium Narrator',
     blend: [
-      { voiceId: 'af_sarah', weight: 0.5 },
-      { voiceId: 'am_adam', weight: 0.5 }
+      { voiceId: 'af_heart', weight: 0.6 },
+      { voiceId: 'af_bella', weight: 0.4 }
     ],
-    description: 'Use for co-host segments where warmth and hype share equal footing.'
+    description: 'Top-tier quality blend for premium narration. Combines warmth with engaging delivery.'
   },
   {
-    id: 'mysterious_narrator',
-    name: 'Mysterious Narrator',
+    id: 'mysterious_storyteller',
+    name: 'Mysterious Storyteller',
     blend: [
-      { voiceId: 'af_sarah', weight: 0.7 },
-      { voiceId: 'af_jade', weight: 0.3 }
+      { voiceId: 'af_heart', weight: 0.7 },
+      { voiceId: 'af_kore', weight: 0.3 }
     ],
-    description: 'Adds Jade’s ethereal color to Sarah’s approachable narration.'
+    description: 'High-quality narration with ethereal mystery. Perfect for dramatic reveals.'
   },
   {
-    id: 'epic_highlight',
-    name: 'Epic Highlight',
+    id: 'epic_announcer',
+    name: 'Epic Announcer',
     blend: [
-      { voiceId: 'am_adam', weight: 0.4 },
-      { voiceId: 'am_daniel', weight: 0.6 }
+      { voiceId: 'am_fenrir', weight: 0.6 },
+      { voiceId: 'am_michael', weight: 0.4 }
     ],
-    description: 'Great for climactic reveals or highlight reels that need extra weight.'
+    description: 'Commanding presence for announcements and boss introductions.'
+  },
+  {
+    id: 'energetic_host',
+    name: 'Energetic Host',
+    blend: [
+      { voiceId: 'am_puck', weight: 0.7 },
+      { voiceId: 'am_michael', weight: 0.3 }
+    ],
+    description: 'High-energy commentary with confident hosting. Great for live segments.'
+  },
+  {
+    id: 'balanced_duo',
+    name: 'Balanced Dual Narrator',
+    blend: [
+      { voiceId: 'af_bella', weight: 0.5 },
+      { voiceId: 'am_michael', weight: 0.5 }
+    ],
+    description: 'Balanced male/female blend for co-narration or varied perspectives.'
   }
 ];
 
 const VOICE_MIXING_GUIDE = {
-  syntax: 'voiceId:weight (comma separated). Example: af_sarah:60,am_adam:40',
+  syntax: 'voiceId:weight (comma separated). Example: af_heart:60,af_bella:40',
   notes: [
     'Weights do not need to total 100; the mixer normalizes them automatically.',
     'Keep blends to three voices or fewer to avoid muddiness.',
     'Choose one primary voice (>= 0.6 weight) and use others for coloration.',
-    'Default gain adjustments should be respected when combining voices to maintain headroom.'
+    'Grade A voices (af_heart, af_bella) recommended for primary narration.',
+    'Grade C+ voices work well for character variation and atmospheric effects.'
   ]
 };
 
@@ -447,4 +519,79 @@ export async function controlAudio(req, res) {
       error: 'Audio container not connected'
     });
   }
+}
+
+
+/**
+ * Register a sync group and queue channel updates
+ * POST /api/audio/sync
+ */
+export async function triggerSync(req, res) {
+  const body = req.body || {};
+  const syncId = body.syncId || body.sync_id;
+  const channels = body.channels;
+  const metadata = body.metadata || body.syncMetadata || {};
+
+  if (!syncId) {
+    return res.status(400).json({
+      success: false,
+      error: 'syncId is required'
+    });
+  }
+
+  if (!channels || typeof channels !== 'object' || Object.keys(channels).length === 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'channels object with at least one entry is required'
+    });
+  }
+
+  const syncMetadata = (metadata && typeof metadata === 'object') ? metadata : {};
+  const channelIds = Object.keys(channels).map((id) => String(id).toLowerCase());
+
+  const registered = sendAudioControl('register_sync', {
+    params: {
+      syncId,
+      channels: channelIds,
+      metadata: syncMetadata
+    }
+  });
+
+  if (!registered) {
+    return res.status(503).json({
+      success: false,
+      error: 'Audio container not connected'
+    });
+  }
+
+  const results = [];
+  const failures = [];
+
+  for (const rawId of Object.keys(channels)) {
+    const channelId = String(rawId).toLowerCase();
+    const payload = channels[rawId] || {};
+    const queued = sendAudioUpdate(channelId, payload, { sync_id: syncId, syncId });
+
+    results.push({ channel: channelId, queued });
+
+    if (!queued) {
+      failures.push(channelId);
+    }
+  }
+
+  if (failures.length > 0) {
+    return res.status(207).json({
+      success: false,
+      syncId,
+      results,
+      error: `Failed to queue channels: ${failures.join(', ')}`
+    });
+  }
+
+  return res.json({
+    success: true,
+    syncId,
+    channels: channelIds.length,
+    results
+  });
 }

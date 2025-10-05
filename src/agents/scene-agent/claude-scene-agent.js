@@ -42,52 +42,6 @@ export class ClaudeSceneAgent extends SceneAgent {
   }
 
   /**
-   * Claude-specific reasoning approach
-   */
-  _generateModelSpecificProposal(context) {
-    const { requirements, spatialContext, position, assetProperties } = context;
-
-    // Claude's methodical analysis
-    const spatialAnalysis = [
-      `ground_level=${spatialContext.groundLevel?.toFixed(1) || '0.0'}`,
-      `nearby=${spatialContext.nearbyCount || 0}`,
-      `density=${spatialContext.density?.toFixed(2) || '0.00'}`
-    ].join(' ');
-
-    const safetyCheck = spatialContext.nearbyCount > 0
-      ? `${spatialContext.nearbyCount} objects checked, ${this.sceneConfig.minObjectSeparation}m separation ensured`
-      : 'clear placement area confirmed';
-
-    const narrativeConnection = this._analyzeNarrativeConnection(requirements, context);
-
-    return {
-      reasoning: `Query: ${spatialAnalysis} | Placement: ${assetProperties.element_type}[${position.map(p => p.toFixed(1)).join(',')}] scale[${assetProperties.scale?.map(s => s.toFixed(1)).join(',') || '1.0,1.0,1.0'}] | Reasoning: ${narrativeConnection} | Safety: ${safetyCheck}`,
-      additionalData: {
-        metadata: {
-          analysis_depth: 'comprehensive',
-          safety_priority: 'high',
-          narrative_integration: 'detailed',
-          claude_methodology: 'systematic_spatial_reasoning'
-        }
-      }
-    };
-  }
-
-  /**
-   * Analyze narrative connection for Claude's storytelling focus
-   */
-  _analyzeNarrativeConnection(requirements, context) {
-    const purpose = requirements.purpose || 'environmental';
-    const storyRelevance = requirements.storyRelevance || 'neutral';
-
-    if (storyRelevance !== 'neutral') {
-      return `${assetProperties.element_type} supports ${storyRelevance} story element for ${purpose} purpose, positioned for character interaction and scene continuity`;
-    } else {
-      return `thoughtful ${assetProperties.element_type} placement for ${purpose}, maintaining spatial harmony and narrative potential`;
-    }
-  }
-
-  /**
    * Claude's enhanced collision avoidance
    */
   _avoidCollisions(position, nearbyObjects, minSeparation) {

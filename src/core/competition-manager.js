@@ -12,12 +12,14 @@ export class CompetitionManager extends EventEmitter {
       proposalTimeout: config.proposalTimeout || 30000, // 30 seconds
       judgeTimeout: config.judgeTimeout || 10000, // 10 seconds for judging
       mockMode: config.mockMode !== false, // Default to mock mode
+      executionTimeout: config.executionTimeout || 10000,
       ...config
     };
 
     // Active competitions
     this.activeCompetitions = new Map(); // batchId -> competition data
     this.proposalCollections = new Map(); // batchId -> proposals array
+    this.executionWatchers = new Map(); // proposalId -> { batchId, timeout }
 
     this._setupEventListeners();
   }
@@ -40,6 +42,11 @@ export class CompetitionManager extends EventEmitter {
     this.eventBus.subscribe('platform:settings_updated', (event) => {
       this._updateSettings(event.payload.settings);
     });
+
+    // Listen for proposal execution confirmation
+    this.eventBus.subscribe('agent:proposal_executed', (event) => {
+      this._handleProposalExecution(event.payload);
+    });
   }
 
   /**
@@ -47,6 +54,8 @@ export class CompetitionManager extends EventEmitter {
    */
   _handleCompetitionStart(competitionData) {
     const { batchId, type, timestamp } = competitionData;
+    const proposalTimeout = competitionData.proposalTimeout || this.config.proposalTimeout;
+    const executionTimeout = competitionData.executionTimeout || this.config.executionTimeout;
 
     console.log(`[CompetitionManager] Starting competition: ${type} (batch: ${batchId})`);
 
@@ -54,7 +63,9 @@ export class CompetitionManager extends EventEmitter {
     this.activeCompetitions.set(batchId, {
       ...competitionData,
       proposals: [],
-      deadline: timestamp + this.config.proposalTimeout,
+      proposalTimeout,
+      executionTimeout,
+      deadline: timestamp + proposalTimeout,
       status: 'collecting_proposals'
     });
 
@@ -189,7 +200,7 @@ export class CompetitionManager extends EventEmitter {
     console.log(`[CompetitionManager] Executing winning proposal from ${winningProposal.agentId}`);
 
     // Update status
-    competition.status = 'executing';
+    competition.status = 'awaiting_execution';
     competition.winningProposal = winningProposal;
     this.activeCompetitions.set(batchId, competition);
 
@@ -218,23 +229,47 @@ export class CompetitionManager extends EventEmitter {
       timestamp: Date.now()
     });
 
-    try {
-      // Wait for agent to execute the proposal
-      setTimeout(() => {
-        this._endCompetition(batchId, {
-          winner: winningProposal.agentId,
-          executed: true
-        });
-      }, 5000); // Give agent 5 seconds to execute
-
-    } catch (error) {
-      console.error(`[CompetitionManager] Execution failed:`, error);
+    const executionTimeout = competition.executionTimeout || this.config.executionTimeout;
+    const timeoutHandle = setTimeout(() => {
+      this.executionWatchers.delete(winningProposal.id);
       this._endCompetition(batchId, {
         winner: winningProposal.agentId,
         executed: false,
-        error: error.message
+        error: 'Agent execution timeout'
       });
+    }, executionTimeout);
+    timeoutHandle.unref?.();
+
+    this.executionWatchers.set(winningProposal.id, {
+      batchId,
+      timeout: timeoutHandle
+    });
+  }
+
+  _handleProposalExecution(payload = {}) {
+    const proposalId = payload.proposalId;
+    if (!proposalId) {
+      return;
     }
+
+    const watcher = this.executionWatchers.get(proposalId);
+    if (!watcher) {
+      return;
+    }
+
+    clearTimeout(watcher.timeout);
+    this.executionWatchers.delete(proposalId);
+
+    const competition = this.activeCompetitions.get(watcher.batchId);
+    if (!competition) {
+      return;
+    }
+
+    this._endCompetition(watcher.batchId, {
+      winner: competition.winningProposal?.agentId,
+      executed: true,
+      executionPayload: payload
+    });
   }
 
   /**
@@ -243,10 +278,23 @@ export class CompetitionManager extends EventEmitter {
   _endCompetition(batchId, result) {
     console.log(`[CompetitionManager] Competition ${batchId} ended:`, result);
 
+    for (const [proposalId, watcher] of this.executionWatchers.entries()) {
+      if (watcher.batchId === batchId) {
+        clearTimeout(watcher.timeout);
+        this.executionWatchers.delete(proposalId);
+      }
+    }
+
+    const competition = this.activeCompetitions.get(batchId);
+
     // Emit completion event
     this.eventBus.emit('competition:completed', {
       batchId,
-      result,
+      context: competition?.context || {},
+      result: {
+        ...result,
+        winningProposal: competition?.winningProposal
+      },
       timestamp: Date.now()
     });
 

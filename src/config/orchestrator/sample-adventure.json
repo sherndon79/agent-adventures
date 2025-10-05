@@ -7,60 +7,464 @@
       "type": "system:scene-reset",
       "description": "Clear stage assets, waypoints, and groups prior to this beat.",
       "dependsOn": [],
-      "budget": { "timeMs": 5000 }
+      "budget": {
+        "timeMs": 5000
+      }
     },
     {
       "id": "story_seed",
       "type": "llm",
       "description": "Generate the next narrative beat and summary notes.",
-      "dependsOn": ["scene_reset"],
-      "budget": { "tokens": 4000, "timeMs": 6000 },
-      "outputs": ["storyBeat", "summary"],
-      "retry": { "attempts": 1, "delayMs": 250 }
+      "dependsOn": [
+        "scene_reset"
+      ],
+      "budget": {
+        "tokens": 4000,
+        "timeMs": 20000
+      },
+      "outputs": [
+        "storyBeat",
+        "summary"
+      ],
+      "retry": {
+        "attempts": 1,
+        "delayMs": 250
+      },
+      "payload": {
+        "provider": "claude",
+        "maxTokens": 500,
+        "userPrompt": "You are scripting the next beat for the Aetheric Spire sequence. Provide a JSON object with fields storyBeat, summary, and keyMotifs. Story context: Liora, Bram, and Elder Keth arrive beneath the resonant spire in the floating city plaza. The conflict is channeling the spire's energy without fracturing reality. Keep it vivid but under 180 tokens.",
+        "systemPrompt": "",
+        "responseFormat": {
+          "type": "json_schema",
+          "name": "StoryBeatResponse",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "storyBeat": { "type": "string" },
+              "summary": { "type": "string" },
+              "keyMotifs": {
+                "type": "array",
+                "items": { "type": "string" },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "storyBeat",
+              "summary",
+              "keyMotifs"
+            ],
+            "additionalProperties": false
+          },
+          "example": {
+            "storyBeat": "Liora braids prism-light into the spire's heart while Elder Keth stabilizes the harmonic lattice and Bram channels the overflow into safety runes.",
+            "summary": "The trio syncs with the spire and learns the energy must be shared to avoid fractures.",
+            "keyMotifs": [
+              "harmonic resonance",
+              "triadic focus",
+              "aetheric glow"
+            ]
+          }
+        }
+      }
     },
     {
       "id": "asset_concepts",
       "type": "llm",
       "description": "Brainstorm asset requirements for the beat (props, set dressing).",
-      "dependsOn": ["story_seed"],
-      "budget": { "tokens": 2000, "timeMs": 4000 },
-      "outputs": ["assetIdeas"],
-      "retry": { "attempts": 1, "delayMs": 250 }
+      "dependsOn": [
+        "story_seed"
+      ],
+      "budget": {
+        "tokens": 2000,
+        "timeMs": 20000
+      },
+      "outputs": [
+        "assetIdeas"
+      ],
+      "retry": {
+        "attempts": 1,
+        "delayMs": 250
+      },
+      "payload": {
+        "provider": "claude",
+        "maxTokens": 450,
+        "userPrompt": "Using the latest storyBeat and summary, list 5 concrete props or environmental elements suitable for the spire plaza set. Prioritize awe-inspiring, luminescent structures. Return JSON with assetIdeas array including name, purpose, placementHint, and mcpElementType.",
+        "responseFormat": {
+          "type": "json_schema",
+          "name": "AssetIdeasResponse",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "assetIdeas": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": { "type": "string" },
+                    "purpose": { "type": "string" },
+                    "placementHint": { "type": "string" },
+                    "mcpElementType": { "type": "string" }
+                  },
+                  "required": [
+                    "name",
+                    "purpose",
+                    "placementHint",
+                    "mcpElementType"
+                  ],
+                  "additionalProperties": false
+                },
+                "minItems": 1
+              }
+            },
+            "required": [
+              "assetIdeas"
+            ],
+            "additionalProperties": false
+          },
+          "example": {
+            "assetIdeas": [
+              {
+                "name": "Resonance Conduit Arches",
+                "purpose": "Guide the spire's energy flows into visible channels of light.",
+                "placementHint": "Form three arches at a five-meter radius encircling the spire base.",
+                "mcpElementType": "cylinder"
+              }
+            ]
+          }
+        }
+    }
+  },
+    {
+      "id": "asset_competition",
+      "type": "competition",
+      "description": "Run multi-agent placement competition to choose best asset layout.",
+      "dependsOn": [
+        "asset_concepts"
+      ],
+      "budget": {
+        "proposalTimeoutMs": 12000,
+        "executionTimeoutMs": 8000
+      },
+      "outputs": [
+        "assetCompetitionResult"
+      ],
+      "payload": {
+        "proposalType": "asset_placement",
+        "expectedAgents": [
+          "claude-1",
+          "gemini-1",
+          "gpt-1"
+        ],
+        "context": {
+          "sourceStage": "asset_concepts",
+          "outputKey": "assetIdeas"
+        }
+      }
     },
     {
       "id": "asset_placement",
       "type": "mcp:worldbuilder",
       "description": "Realize selected assets in the Isaac Sim stage via WorldBuilder MCP.",
-      "dependsOn": ["asset_concepts"],
-      "budget": { "timeMs": 8000 },
-      "outputs": ["placementSummary"],
-      "retry": { "attempts": 2, "delayMs": 500 }
+      "dependsOn": [
+        "asset_competition"
+      ],
+      "budget": {
+        "timeMs": 15000
+      },
+      "outputs": [
+        "placementSummary"
+      ],
+      "retry": {
+        "attempts": 2,
+        "delayMs": 500
+      },
+      "payload": {
+        "tool": "worldbuilder_create_batch",
+        "args": {
+          "batch_name": "orchestrator_showcase",
+          "parent_path": "/World",
+          "elements": [
+            {
+              "element_type": "cylinder",
+              "name": "aetheric_spire",
+              "position": [
+                0,
+                0,
+                6
+              ],
+              "scale": [
+                1.2,
+                1.2,
+                12
+              ],
+              "color": [
+                0.2,
+                0.8,
+                1.0
+              ]
+            },
+            {
+              "element_type": "sphere",
+              "name": "halo_light_north",
+              "position": [
+                0,
+                6,
+                4
+              ],
+              "scale": [
+                1.5,
+                1.5,
+                1.5
+              ],
+              "color": [
+                1.0,
+                0.85,
+                0.3
+              ]
+            },
+            {
+              "element_type": "sphere",
+              "name": "halo_light_south",
+              "position": [
+                0,
+                -6,
+                4
+              ],
+              "scale": [
+                1.5,
+                1.5,
+                1.5
+              ],
+              "color": [
+                1.0,
+                0.85,
+                0.3
+              ]
+            },
+            {
+              "element_type": "sphere",
+              "name": "halo_light_east",
+              "position": [
+                6,
+                0,
+                4
+              ],
+              "scale": [
+                1.5,
+                1.5,
+                1.5
+              ],
+              "color": [
+                1.0,
+                0.85,
+                0.3
+              ]
+            },
+            {
+              "element_type": "sphere",
+              "name": "halo_light_west",
+              "position": [
+                -6,
+                0,
+                4
+              ],
+              "scale": [
+                1.5,
+                1.5,
+                1.5
+              ],
+              "color": [
+                1.0,
+                0.85,
+                0.3
+              ]
+            },
+            {
+              "element_type": "cube",
+              "name": "elevated_plinth",
+              "position": [
+                0,
+                0,
+                1
+              ],
+              "scale": [
+                6,
+                6,
+                2
+              ],
+              "color": [
+                0.15,
+                0.15,
+                0.22
+              ]
+            }
+          ]
+        }
+      }
     },
     {
       "id": "camera_plan",
       "type": "mcp:worldviewer",
       "description": "Plan and execute cinematography to showcase the updated scene.",
-      "dependsOn": ["asset_placement"],
-      "budget": { "timeMs": 5000 },
-      "outputs": ["cameraMoves"]
+      "dependsOn": [
+        "asset_placement"
+      ],
+      "budget": {
+        "timeMs": 15000
+      },
+      "outputs": [
+        "cameraMoves"
+      ],
+      "payload": {
+        "tool": "worldviewer_orbit_shot",
+        "args": {
+          "center": [
+            0,
+            0,
+            4
+          ],
+          "distance": 14,
+          "start_azimuth": -60,
+          "end_azimuth": 240,
+          "elevation": 25,
+          "duration": 14,
+          "start_position": [-10, -8, 6],
+          "start_target": [0, 0, 4],
+          "end_target": [0, 0, 4],
+          "execution_mode": "auto"
+        }
+      }
     },
     {
       "id": "dialogue",
       "type": "llm",
       "description": "Author dialogue or narration for the active characters.",
-      "dependsOn": ["story_seed", "camera_plan"],
-      "budget": { "tokens": 3000, "timeMs": 5000 },
-      "outputs": ["dialogueScript"],
-      "retry": { "attempts": 1, "delayMs": 250 }
+      "dependsOn": [
+        "story_seed",
+        "camera_plan"
+      ],
+      "budget": {
+        "tokens": 3000,
+        "timeMs": 20000
+      },
+      "outputs": [
+        "dialogueScript"
+      ],
+      "retry": {
+        "attempts": 1,
+        "delayMs": 250
+      },
+      "payload": {
+        "provider": "claude",
+        "maxTokens": 600,
+        "userPrompt": "Write short dialogue/narration (<=220 tokens) for Liora, Bram, and Elder Keth as they attempt to harmonize the spire. Reference the keyMotifs from the story beat. Provide JSON with dialogueScript (array of {speaker,line}) and narration (optional).",
+        "responseFormat": {
+          "type": "json_schema",
+          "name": "DialogueResponse",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "dialogueScript": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "speaker": { "type": "string" },
+                    "line": { "type": "string" }
+                  },
+                  "required": [
+                    "speaker",
+                    "line"
+                  ],
+                  "additionalProperties": false
+                },
+                "minItems": 1
+              },
+              "narration": { "type": "string" }
+            },
+            "required": [
+              "dialogueScript"
+            ],
+            "additionalProperties": false
+          },
+          "example": {
+            "dialogueScript": [
+              {
+                "speaker": "Liora",
+                "line": "Feel the prism hum rising—match the cadence with me, Bram!"
+              },
+              {
+                "speaker": "Bram",
+                "line": "Holding steady. Elder Keth, pull the harmonic thread tighter!"
+              }
+            ],
+            "narration": "A lattice of color weaves between them as the spire resonates with their shared rhythm."
+          }
+        }
+      }
     },
     {
       "id": "audio_mix",
       "type": "audio",
       "description": "Trigger narration/commentary TTS and arrange ambient/music cues.",
-      "dependsOn": ["dialogue"],
-      "budget": { "timeMs": 7000 },
-      "outputs": ["audioStatus"],
-      "optional": true
+      "dependsOn": [
+        "dialogue"
+      ],
+      "budget": {
+        "timeMs": 9000
+      },
+      "outputs": [
+        "audioStatus"
+      ],
+      "optional": true,
+      "payload": {
+        "sync": {
+          "id": "sample_scene_intro",
+          "channels": [
+            "narration",
+            "music",
+            "ambient"
+          ],
+          "metadata": {
+            "scene": "aetheric_spire_intro"
+          }
+        },
+        "requests": [
+          {
+            "channel": "narration",
+            "payload": {
+              "text": "Behold the Aetheric Spire, humming with resonant light\u2014our heroes arrive beneath cascading halos of energy.",
+              "voice": "af_heart",
+              "volume": 0.65,
+              "duck_background": true
+            }
+          },
+          {
+            "channel": "music",
+            "payload": {
+              "tension_level": "epic",
+              "intensity": 0.75,
+              "genre": "orchestral",
+              "transition": {
+                "type": "crescendo",
+                "duration_ms": 5000
+              }
+            }
+          },
+          {
+            "channel": "ambient",
+            "payload": {
+              "environment": "crystal_cavern",
+              "special_effects": [
+                "ethereal_chimes"
+              ],
+              "volume": 0.35
+            }
+          }
+        ],
+        "allowOffline": true
+      }
     }
   ]
 }

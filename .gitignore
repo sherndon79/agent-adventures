@@ -93,6 +93,7 @@ env/
 test_venv/
 *_venv/
 .venv/
+.venv-ambient/
 __pycache__/
 *.py[cod]
 *$py.class
@@ -117,3 +118,11 @@ assets/
 # Screenshot archives (keep current screenshots)
 screenshots/archive/
 screenshots/old/
+# Development review docs
+docs/dev_docs/
+
+# Local debug utilities
+scripts/debug/youtube/.env
+scripts/debug/youtube/client_secret.json
+scripts/debug/youtube/youtube_chat_token.json
+scripts/debug/youtube/.venv/

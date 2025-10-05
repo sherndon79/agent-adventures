@@ -12,6 +12,7 @@ import {
   sendCommentary,
   getStatus,
   controlAudio,
+  triggerSync,
   listVoices
 } from '../controllers/audioController.js';
 
@@ -37,5 +38,8 @@ router.get('/voices', listVoices);
 
 // Control endpoint (pause/resume/clear_queue)
 router.post('/control', controlAudio);
+// Sync endpoint
+router.post('/sync', triggerSync);
+
 
 export default router;

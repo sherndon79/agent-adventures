@@ -1,6 +1,7 @@
 import { MultiLLMAgent } from '../../core/multi-llm-agent.js';
 import { Proposal } from '../../core/proposal-system.js';
 import { config } from '../../config/environment.js';
+import { SCENE_AGENT_PERSONAS } from './personas.js';
 
 /**
  * Scene Agent Implementation - Multi-LLM competitive agent for 3D scene design
@@ -301,46 +302,143 @@ export class SceneAgent extends MultiLLMAgent {
    * Generate model-specific proposal variations
    */
   _generateModelSpecificProposal(context) {
+    const persona = SCENE_AGENT_PERSONAS[this.llmModel] || SCENE_AGENT_PERSONAS.default;
+
+    const placeholders = this._buildPersonaPlaceholders(context);
+    this._applyPersonaAugmentations(this.llmModel, context, placeholders);
+
+    const reasoning = persona.reasoningTemplate
+      ? this._fillPersonaTemplate(persona.reasoningTemplate, placeholders)
+      : this._fillPersonaTemplate(SCENE_AGENT_PERSONAS.default.reasoningTemplate, placeholders);
+
+    const metadata = {
+      ...(persona.metadata || {}),
+      ...(placeholders.metadataOverrides || {})
+    };
+
+    for (const key of Object.keys(metadata)) {
+      if (metadata[key] === undefined || metadata[key] === null) {
+        delete metadata[key];
+      }
+    }
+
+    return {
+      reasoning,
+      additionalData: Object.keys(metadata).length > 0 ? { metadata } : {}
+    };
+  }
+
+  _buildPersonaPlaceholders(context) {
     const { requirements, spatialContext, position, assetProperties } = context;
 
-    switch (this.llmModel) {
+    const positionStr = position.map(p => Number.parseFloat(p || 0).toFixed(1)).join(',');
+    const scale = assetProperties.scale || [1, 1, 1];
+    const scaleStr = scale.map(s => Number.parseFloat(s || 1).toFixed(1)).join(',');
+    const color = assetProperties.color || [];
+    const colorStr = color.length > 0
+      ? color.map(c => Number.parseFloat(c).toFixed(2)).join(',')
+      : 'auto';
+
+    const nearbyCount = spatialContext.nearby?.total_found
+      ?? spatialContext.nearby?.count
+      ?? 0;
+    const densityValue = typeof spatialContext.density === 'number'
+      ? spatialContext.density
+      : 0;
+    const densityStr = densityValue > 0 ? densityValue.toFixed(2) : 'unknown';
+    const groundLevel = spatialContext.groundLevel?.ground_level;
+    const groundLevelStr = typeof groundLevel === 'number'
+      ? groundLevel.toFixed(1)
+      : '0.0';
+
+    const spatialAnalysis = `ground=${groundLevelStr} nearby=${nearbyCount} density=${densityStr}`;
+    const safetyCheck = nearbyCount > 0
+      ? `${nearbyCount} objects checked, ${this.sceneConfig.minObjectSeparation}m separation ensured`
+      : 'clear placement area confirmed';
+
+    return {
+      elementType: assetProperties.element_type,
+      position: positionStr,
+      scale: scaleStr,
+      color: colorStr,
+      density: densityStr,
+      nearbyCount,
+      spatialAnalysis,
+      safetyCheck,
+      purpose: requirements.purpose,
+      storyRelevance: requirements.storyRelevance || 'neutral',
+      narrativeConnection: this._describeNarrativeConnection(requirements, assetProperties)
+    };
+  }
+
+  _applyPersonaAugmentations(personaKey, context, placeholders) {
+    const { spatialContext, position, assetProperties } = context;
+
+    switch (personaKey) {
+      case 'gemini': {
+        const visualStrategy = this._determineVisualStrategy(spatialContext, position);
+        const compositionEffect = this._calculateCompositionEffect(spatialContext, assetProperties);
+        placeholders.visualStrategy = visualStrategy || 'visual_focus';
+        placeholders.compositionEffect = compositionEffect || 'visual_enhancement';
+        if (typeof this._identifyDramaticElements === 'function') {
+          placeholders.dramaticElements = this._identifyDramaticElements(position, assetProperties);
+        } else {
+          placeholders.dramaticElements = 'dynamic_balance';
+        }
+        break;
+      }
+      case 'gpt': {
+        if (typeof this._determineOptimizationStrategy === 'function') {
+          placeholders.optimizationStrategy = this._determineOptimizationStrategy(spatialContext, context.requirements)
+            || 'multi_factor_optimized';
+        }
+        if (typeof this._analyzePurposeBalance === 'function') {
+          placeholders.purposeBalance = this._analyzePurposeBalance(context.requirements, spatialContext)
+            || 'scene_enhancement';
+        }
+        if (typeof this._identifyAdaptiveElements === 'function') {
+          placeholders.adaptiveElements = this._identifyAdaptiveElements(spatialContext, assetProperties)
+            || 'adaptive_balance';
+        }
+        if (typeof this._getBalanceFactors === 'function' || typeof this._getAudienceConsiderations === 'function') {
+          placeholders.metadataOverrides = {
+            ...(placeholders.metadataOverrides || {}),
+            balance_factors: typeof this._getBalanceFactors === 'function'
+              ? this._getBalanceFactors(context.requirements, spatialContext)
+              : undefined,
+            audience_considerations: typeof this._getAudienceConsiderations === 'function'
+              ? this._getAudienceConsiderations(context.requirements)
+              : undefined
+          };
+        }
+        if (typeof this._calculateAdaptabilityScore === 'function') {
+          placeholders.adaptabilityScore = this._calculateAdaptabilityScore(spatialContext);
+        }
+        break;
+      }
       case 'claude':
-        return {
-          reasoning: `Thoughtful placement at [${position.map(p => p.toFixed(1)).join(',')}]: ${assetProperties.element_type} supports ${requirements.purpose} with careful spatial consideration. Ground level ${spatialContext.groundLevel?.ground_level?.toFixed(1) || '0.0'}, ${spatialContext.nearby?.total_found || 0} nearby objects considered.`,
-          additionalData: {
-            metadata: {
-              reasoning_depth: 'detailed',
-              spatial_analysis: 'comprehensive',
-              narrative_integration: 'high'
-            }
-          }
-        };
-
-      case 'gemini':
-        return {
-          reasoning: `Bold ${assetProperties.element_type} placement for maximum visual impact! Position [${position.map(p => p.toFixed(1)).join(',')}] creates dynamic composition with ${spatialContext.density || 'unknown'} spatial density. Color ${assetProperties.color?.join(',') || 'auto'} enhances scene drama.`,
-          additionalData: {
-            metadata: {
-              visual_emphasis: 'high',
-              composition_style: 'dynamic',
-              color_impact: 'strong'
-            }
-          }
-        };
-
-      case 'gpt':
       default:
-        return {
-          reasoning: `Balanced ${assetProperties.element_type} placement at [${position.map(p => p.toFixed(1)).join(',')}] optimizes story support and audience engagement. Scale ${assetProperties.scale?.join(',') || 'auto'} appropriate for ${requirements.purpose}, considering ${spatialContext.nearby?.total_found || 0} surrounding elements.`,
-          additionalData: {
-            metadata: {
-              optimization_focus: 'balanced',
-              audience_consideration: 'high',
-              adaptability: 'flexible'
-            }
-          }
-        };
+        break;
     }
+  }
+
+  _fillPersonaTemplate(template, placeholders) {
+    return template.replace(/{{(.*?)}}/g, (_, key) => {
+      const value = placeholders[key.trim()];
+      return value !== undefined && value !== null ? String(value) : '';
+    });
+  }
+
+  _describeNarrativeConnection(requirements, assetProperties) {
+    const purpose = requirements.purpose || 'environmental';
+    const storyRelevance = requirements.storyRelevance || 'neutral';
+    const elementLabel = assetProperties?.element_type || 'element';
+
+    if (storyRelevance !== 'neutral') {
+      return `${elementLabel} supports ${storyRelevance} story element for ${purpose} purpose, positioned for character interaction and scene continuity`;
+    }
+
+    return `thoughtful ${elementLabel} placement for ${purpose}, maintaining spatial harmony and narrative potential`;
   }
 
   /**
@@ -604,12 +702,15 @@ export class SceneAgent extends MultiLLMAgent {
     return await super._handleEvent(eventType, payload, event);
   }
 
-  async _executeProposal(proposalId, decision) {
-    // Find the proposal data (would need to be stored/retrieved)
-    // For now, we'll emit the execution event
-    await this.executeAssetPlacement({ id: proposalId }, decision);
+  async _executeProposal(proposal, decision) {
+    if (!proposal || !proposal.data) {
+      console.warn(`[${this.id}] Missing proposal payload during execution.`);
+      return super._executeProposal(proposal, decision);
+    }
 
-    return super._executeProposal(proposalId, decision);
+    await this.executeAssetPlacement(proposal, decision);
+
+    return super._executeProposal(proposal, decision);
   }
 
   getMetrics() {

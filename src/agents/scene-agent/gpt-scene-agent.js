@@ -42,34 +42,6 @@ export class GPTSceneAgent extends SceneAgent {
   }
 
   /**
-   * GPT-specific balanced optimization approach
-   */
-  _generateModelSpecificProposal(context) {
-    const { requirements, spatialContext, position, assetProperties } = context;
-
-    // GPT's optimization strategy
-    const optimizationStrategy = this._determineOptimizationStrategy(spatialContext, requirements);
-
-    const balancedPlacement = `${assetProperties.element_type}[${position.map(p => p.toFixed(1)).join(',')}] scale[${assetProperties.scale?.map(s => s.toFixed(1)).join(',') || '1.0,1.0,1.0'}]`;
-
-    const purposeAnalysis = this._analyzePurposeBalance(requirements, spatialContext);
-    const adaptiveElements = this._identifyAdaptiveElements(spatialContext, assetProperties);
-
-    return {
-      reasoning: `Balance: ${optimizationStrategy} | Placement: ${balancedPlacement} | Purpose: ${purposeAnalysis} | Adaptive: ${adaptiveElements}`,
-      additionalData: {
-        metadata: {
-          optimization_type: optimizationStrategy,
-          balance_factors: this._getBalanceFactors(requirements, spatialContext),
-          audience_considerations: this._getAudienceConsiderations(requirements),
-          gpt_approach: 'balanced_multi_factor_optimization',
-          adaptability_score: this._calculateAdaptabilityScore(spatialContext)
-        }
-      }
-    };
-  }
-
-  /**
    * Determine optimization strategy based on context
    */
   _determineOptimizationStrategy(spatialContext, requirements) {

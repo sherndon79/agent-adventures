@@ -34,6 +34,7 @@ export class StoryState extends EventEmitter {
           twitch: { viewers: 0, engagement: 0 },
           youtube: { viewers: 0, engagement: 0 }
         },
+        pending_votes: [],
         ...initialState.audience
       },
       scene: {

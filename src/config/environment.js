@@ -77,8 +77,9 @@ export const config = {
     anthropic: {
       apiKey: process.env.ANTHROPIC_API_KEY,
       baseURL: 'https://api.anthropic.com',
-      model: 'claude-sonnet-4-20250514', // Current Sonnet 4 - balanced performance/cost
-      maxTokens: 1000
+      model: 'claude-sonnet-4-5-20250929', // Latest Sonnet 4.5 baseline (verified 2025-10-03)
+      maxTokens: 1000,
+      responseFormatBeta: process.env.ANTHROPIC_RESPONSE_FORMAT_BETA
     },
     openai: {
       apiKey: process.env.OPENAI_API_KEY,
@@ -89,7 +90,7 @@ export const config = {
     google: {
       apiKey: process.env.GOOGLE_API_KEY,
       baseURL: 'https://generativelanguage.googleapis.com/v1',
-      model: 'gemini-2.5-pro', // Current Gemini model
+      model: 'gemini-2.5-pro-preview-06-05', // Gemini 2.5 Pro preview (verified 2025-10-03)
       maxTokens: 1000
     },
 
@@ -187,7 +188,11 @@ export const config = {
     maxPerProposal: parseInteger(process.env.MAX_TOKENS_PER_PROPOSAL, 100),
     maxPerDecision: parseInteger(process.env.MAX_TOKENS_PER_DECISION, 50),
     enableTracking: parseBoolean(process.env.ENABLE_TOKEN_TRACKING, true),
-    mockLLMMode: parseBoolean(process.env.MOCK_LLM_MODE, true)
+    mockLLMMode: parseBoolean(process.env.MOCK_LLM_MODE, true),
+    enforceBudgets: parseBoolean(process.env.ENFORCE_TOKEN_BUDGETS ?? 'true', true),
+    cycleBudget: parseInteger(process.env.TOKEN_BUDGET_PER_CYCLE, 800),
+    dailyBudget: parseInteger(process.env.TOKEN_BUDGET_PER_DAY, 20000),
+    cycleWindowMs: parseInteger(process.env.TOKEN_BUDGET_CYCLE_WINDOW_MS, 600000)
   },
 
   // Logging
