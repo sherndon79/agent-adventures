@@ -522,3 +522,193 @@
 .shadow { box-shadow: var(--shadow-md); }
 .shadow-sm { box-shadow: var(--shadow-sm); }
 .shadow-lg { box-shadow: var(--shadow-lg); }
+/* Story Loop Panel Styles */
+.story-loop-panel .loop-status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--spacing-md);
+}
+
+.story-loop-panel .status-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.story-loop-panel .status-label {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.story-loop-panel .status-value {
+  font-size: 1rem;
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.story-loop-panel .phase-badge {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--primary-blue);
+  color: white;
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.story-loop-panel .countdown {
+  font-size: 1.5rem;
+  color: var(--accent-purple);
+  font-family: 'Courier New', monospace;
+}
+
+.story-loop-panel .genres-container,
+.story-loop-panel .voting-results {
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--border-color);
+}
+
+.story-loop-panel .genres-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-sm);
+}
+
+.story-loop-panel .genre-item {
+  padding: var(--spacing-sm);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.story-loop-panel .genre-number {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: var(--primary-blue);
+  color: white;
+  border-radius: 50%;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.story-loop-panel .genre-info {
+  flex: 1;
+}
+
+.story-loop-panel .genre-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.story-loop-panel .genre-tagline {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  display: block;
+  margin-top: 2px;
+}
+
+.story-loop-panel .votes-bars {
+  margin-top: var(--spacing-sm);
+}
+
+.story-loop-panel .vote-bar {
+  margin-bottom: var(--spacing-sm);
+}
+
+.story-loop-panel .vote-bar-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  font-size: 0.75rem;
+}
+
+.story-loop-panel .vote-bar-name {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.story-loop-panel .vote-bar-count {
+  color: var(--text-secondary);
+}
+
+.story-loop-panel .vote-bar-fill-container {
+  height: 20px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.story-loop-panel .vote-bar-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary-blue), var(--accent-purple));
+  transition: width 0.3s ease;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 8px;
+}
+
+.story-loop-panel .winner-announcement {
+  margin-top: var(--spacing-md);
+  padding: var(--spacing-md);
+  background: linear-gradient(135deg, var(--success-green), var(--primary-blue));
+  color: white;
+  border-radius: var(--radius-md);
+  text-align: center;
+  font-weight: 600;
+}
+
+.story-loop-panel .chat-activity {
+  margin-top: var(--spacing-md);
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--border-color);
+}
+
+.story-loop-panel .chat-messages {
+  max-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-sm);
+}
+
+.story-loop-panel .chat-message {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+  font-size: 0.75rem;
+  display: flex;
+  gap: var(--spacing-xs);
+}
+
+.story-loop-panel .chat-message.system {
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.story-loop-panel .chat-message.vote {
+  border-left: 3px solid var(--success-green);
+}
+
+.story-loop-panel .chat-author {
+  font-weight: 600;
+  color: var(--primary-blue);
+}
+
+.story-loop-panel .chat-text {
+  color: var(--text-primary);
+}

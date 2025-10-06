@@ -1,0 +1,10 @@
+{
+  "screenshot_file": "Live_streaming_-_YouTube_Studio_-_Google_Chrome_20251005_145959.png",
+  "timestamp": "2025-10-05T14:59:59.978998",
+  "file_size_bytes": 217763,
+  "purpose": "Check YouTube live chat for bot messages",
+  "tags": [],
+  "notes": "Looking at bottom right for chat messages to see if they're being truncated",
+  "tool_used": "screenshot_window",
+  "window_title": "Live streaming - YouTube Studio - Google Chrome"
+}

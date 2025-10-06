@@ -131,6 +131,7 @@ class AgentAdventuresDashboard {
     try {
       // Initialize all dashboard modules
       this.modules.streamViewer = new StreamViewer(this);
+      this.modules.storyLoop = new StoryLoopController(this);
       this.modules.agentCompetition = new AgentCompetition(this);
       this.modules.metricsTracker = new MetricsTracker(this);
       this.modules.systemHealth = new SystemHealth(this);

@@ -69,8 +69,53 @@
                 </div>
             </section>
 
-            <!-- Agent Competition (Top Right) -->
-            <section class="panel agents-panel">
+            <!-- Story Loop Status (Top Right) -->
+            <section class="panel story-loop-panel">
+                <div class="panel-header">
+                    <h2 class="panel-title">🔄 Story Loop</h2>
+                    <div class="loop-controls">
+                        <button class="btn btn-success" id="start-story-loop">Start Loop</button>
+                        <button class="btn btn-danger" id="stop-story-loop" disabled>Stop Loop</button>
+                    </div>
+                </div>
+                <div class="panel-content">
+                    <div class="loop-status">
+                        <div class="status-row">
+                            <span class="status-label">Phase:</span>
+                            <span class="status-value phase-badge" id="loop-phase">Idle</span>
+                        </div>
+                        <div class="status-row">
+                            <span class="status-label">Iteration:</span>
+                            <span class="status-value" id="loop-iteration">0</span>
+                        </div>
+                        <div class="status-row">
+                            <span class="status-label">Timer:</span>
+                            <span class="status-value countdown" id="loop-timer">--</span>
+                        </div>
+                    </div>
+
+                    <div class="genres-container" id="genres-container" style="display: none;">
+                        <h4>📚 Current Genres</h4>
+                        <div class="genres-list" id="genres-list"></div>
+                    </div>
+
+                    <div class="voting-results" id="voting-results" style="display: none;">
+                        <h4>🗳️ Voting Results</h4>
+                        <div class="votes-bars" id="votes-bars"></div>
+                        <div class="winner-announcement" id="winner-announcement"></div>
+                    </div>
+
+                    <div class="chat-activity" id="chat-activity">
+                        <h4>💬 Recent Chat Activity</h4>
+                        <div class="chat-messages" id="chat-messages">
+                            <div class="chat-message system">Waiting for messages...</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Agent Competition (Hidden by default, shown during Phase 4) -->
+            <section class="panel agents-panel" id="agents-panel" style="display: none;">
                 <div class="panel-header">
                     <h2 class="panel-title">🤖 Agent Competition</h2>
                     <div class="competition-controls">
@@ -398,6 +443,7 @@
     <!-- Scripts -->
     <script src="js/dashboard-core.js"></script>
     <script src="js/stream-viewer.js"></script>
+    <script src="js/story-loop.js"></script>
     <script src="js/agent-competition.js"></script>
     <script src="js/metrics-tracker.js"></script>
     <script src="js/system-health.js"></script>

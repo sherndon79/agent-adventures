@@ -12,10 +12,14 @@ import { EventBus } from './core/event-bus.js';
 import { StoryState } from './core/story-state.js';
 import { AgentManager } from './core/agent-manager.js';
 import { CompetitionManager } from './core/competition-manager.js';
+import { StoryLoopManager } from './core/story-loop-manager.js';
 import { WebServerService } from './services/web-server.js';
 import { MCPClientManager } from './services/mcp-clients/index.js';
 import { OrchestratorManager } from './orchestrator/index.js';
 import YouTubeChatListener from './services/youtube/youtube-chat-listener.js';
+import { ChatMessagePoster } from './services/chat/chat-message-poster.js';
+import { VoteCollector } from './services/voting/vote-collector.js';
+import { VoteTimer } from './services/voting/vote-timer.js';
 
 class AdventuresPlatform {
   constructor(config = {}) {
@@ -79,6 +83,14 @@ class AdventuresPlatform {
             && process.env.ORCHESTRATOR_MOCK_HANDLERS === 'false'
           ),
         ...config.orchestrator
+      },
+
+      storyLoop: {
+        autoStart: process.env.STORY_LOOP_AUTO_START === 'true',
+        voteDuration: Number.parseInt(process.env.STORY_LOOP_VOTE_DURATION || '30', 10),
+        presentationDuration: Number.parseInt(process.env.STORY_LOOP_PRESENTATION_DURATION || '60', 10),
+        cleanupCountdown: Number.parseInt(process.env.STORY_LOOP_CLEANUP_COUNTDOWN || '60', 10),
+        ...config.storyLoop
       }
     };
 
@@ -98,6 +110,10 @@ class AdventuresPlatform {
     this.orchestratorMcpResponder = null;
     this.orchestratorAudioResponder = null;
     this.youtubeChatListener = null;
+    this.chatMessagePoster = null;
+    this.voteCollector = null;
+    this.voteTimer = null;
+    this.storyLoopManager = null;
   }
 
   /**
@@ -199,6 +215,16 @@ class AdventuresPlatform {
         }
       }
 
+      // Auto-start story loop if configured
+      if (this.config.storyLoop.autoStart && this.storyLoopManager) {
+        try {
+          await this.storyLoopManager.start();
+          console.log('🔄 Story loop auto-started');
+        } catch (error) {
+          console.error('⚠️ Failed to auto-start story loop:', error);
+        }
+      }
+
       return {
         success: true,
         agentsStarted: successfulAgents.length,
@@ -247,6 +273,19 @@ class AdventuresPlatform {
 
       if (this.orchestratorAudioResponder?.shutdown) {
         await this.orchestratorAudioResponder.shutdown();
+      }
+
+      // Stop story loop components
+      if (this.storyLoopManager) {
+        this.storyLoopManager.stop();
+      }
+
+      if (this.voteTimer) {
+        this.voteTimer.destroy();
+      }
+
+      if (this.voteCollector) {
+        this.voteCollector.destroy();
       }
 
       if (this.youtubeChatListener) {
@@ -404,18 +443,69 @@ class AdventuresPlatform {
 
     const chatApiKey = process.env.YOUTUBE_API_KEY;
     const chatBroadcastId = process.env.YOUTUBE_LIVE_BROADCAST_ID;
-    if (chatApiKey && chatBroadcastId) {
-      const defaultInterval = Number.parseInt(process.env.YOUTUBE_CHAT_POLL_INTERVAL_MS || '5000', 10);
-      this.youtubeChatListener = new YouTubeChatListener({
-        eventBus: this.eventBus,
-        apiKey: chatApiKey,
-        broadcastId: chatBroadcastId,
-        pollIntervalMs: Number.isNaN(defaultInterval) ? 5000 : defaultInterval
-      });
-      await this.youtubeChatListener.start();
-      console.log('   ✓ YouTube chat listener initialized');
+    const oauthTokenPath = process.env.YOUTUBE_OAUTH_TOKEN_PATH;
+    if ((chatApiKey || oauthTokenPath) && chatBroadcastId) {
+      try {
+        const defaultInterval = Number.parseInt(process.env.YOUTUBE_CHAT_POLL_INTERVAL_MS || '5000', 10);
+        this.youtubeChatListener = new YouTubeChatListener({
+          eventBus: this.eventBus,
+          apiKey: chatApiKey,
+          oauthTokenPath,
+          broadcastId: chatBroadcastId,
+          pollIntervalMs: Number.isNaN(defaultInterval) ? 5000 : defaultInterval
+        });
+        await this.youtubeChatListener.start();
+        console.log('   ✓ YouTube chat listener initialized');
+      } catch (error) {
+        console.error('   ⚠️ YouTube chat listener failed to initialize:', error.message);
+        console.log('   ℹ️ Story loop will be disabled (requires YouTube chat)');
+        this.youtubeChatListener = null;
+      }
+
+      // Initialize story loop components (requires YouTube chat)
+      // Chat message poster requires liveChatId from listener
+      const liveChatId = this.youtubeChatListener?.liveChatId;
+      if (this.youtubeChatListener && liveChatId) {
+        this.chatMessagePoster = new ChatMessagePoster({
+          apiKey: chatApiKey,
+          oauthTokenPath,
+          liveChatId
+        });
+        console.log('   ✓ Chat message poster initialized');
+
+        // Initialize voting components
+        const selfTestChannelId = process.env.YOUTUBE_CHANNEL_ID || null;
+        this.voteCollector = new VoteCollector({
+          eventBus: this.eventBus,
+          selfTestChannelId
+        });
+        if (selfTestChannelId) {
+          console.log('   ✓ Vote collector initialized (self-test mode enabled)');
+        } else {
+          console.log('   ✓ Vote collector initialized');
+        }
+
+        this.voteTimer = new VoteTimer({
+          eventBus: this.eventBus,
+          duration: this.config.storyLoop.voteDuration,
+          suppressNotifications: !!selfTestChannelId // Suppress in self-test mode
+        });
+        console.log(`   ✓ Vote timer initialized${selfTestChannelId ? ' (self-test mode - notifications suppressed)' : ''}`);
+
+        // Initialize story loop manager
+        this.storyLoopManager = new StoryLoopManager({
+          eventBus: this.eventBus,
+          storyState: this.storyState,
+          mcpClients: this.mcpClientManager,
+          chatPoster: this.chatMessagePoster,
+          voteCollector: this.voteCollector,
+          voteTimer: this.voteTimer
+        });
+        console.log('   ✓ Story loop manager initialized');
+      }
     } else {
       console.log('   ℹ️ YouTube chat listener disabled (missing YOUTUBE_API_KEY or YOUTUBE_LIVE_BROADCAST_ID)');
+      console.log('   ℹ️ Story loop disabled (requires YouTube chat)');
     }
   }
 
