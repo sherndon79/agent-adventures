@@ -126,3 +126,5 @@ scripts/debug/youtube/.env
 scripts/debug/youtube/client_secret.json
 scripts/debug/youtube/youtube_chat_token.json
 scripts/debug/youtube/.venv/
+scripts/debug/*.py
+scripts/debug/**/*.py
