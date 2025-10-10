@@ -67,32 +67,19 @@ export class MultiLLMAgent extends BaseAgent {
    * Generate a proposal for the given context
    * Supports both challenge object format and individual parameters
    */
-  async generateProposal(batchIdOrChallenge, proposalType, context) {
+  async generateProposal(challenge) {
     if (this.state !== 'running') {
       throw new Error(`Agent ${this.id} not running`);
     }
 
-    // Handle challenge object format
-    let batchId, actualProposalType, actualContext;
-    if (typeof batchIdOrChallenge === 'object' && batchIdOrChallenge.type) {
-      // Challenge object format: generateProposal(challenge)
-      const challenge = batchIdOrChallenge;
-      batchId = challenge.id || 'challenge-' + Date.now();
-      actualProposalType = challenge.type;
-      actualContext = challenge;
-    } else {
-      // Individual parameters format: generateProposal(batchId, proposalType, context)
-      batchId = batchIdOrChallenge;
-      actualProposalType = proposalType;
-      actualContext = context;
-    }
+    const { id: batchId, type: proposalType, ...context } = challenge;
 
     try {
       // Step 1: Query spatial context if needed
-      const spatialContext = await this._querySpatialContext(actualProposalType, actualContext);
+      const spatialContext = await this._querySpatialContext(proposalType, context);
 
       // Step 2: Prepare context for LLM
-      const llmContext = this._prepareLLMContext(actualProposalType, actualContext, spatialContext);
+      const llmContext = this._prepareLLMContext(proposalType, context, spatialContext);
 
       // Step 3: Generate proposal via LLM
       const proposalData = await this._callLLM(llmContext);
@@ -104,7 +91,7 @@ export class MultiLLMAgent extends BaseAgent {
       const proposal = new Proposal(
         this.id,
         this.agentType,
-        actualProposalType,
+        proposalType,
         enhancedData.data,
         enhancedData.reasoning
       );
@@ -334,7 +321,11 @@ export class MultiLLMAgent extends BaseAgent {
       const systemPrompt = this.systemPrompt || this._getDefaultSystemPrompt();
       const userPrompt = this._formatLLMPrompt(llmContext);
       const responseFormat = this._getProposalResponseFormat(llmContext.proposalType);
-      const maxTokens = config.tokens.maxPerProposal;
+
+      // Scene generation (asset_placement) gets significantly more tokens - this is the PRIMARY feature
+      const maxTokens = llmContext.proposalType === 'asset_placement'
+        ? config.llm[this.llmModel]?.maxTokens || 6000  // Use model-specific max tokens for scenes
+        : config.tokens.maxPerProposal;  // Other proposal types use standard budget
 
       const budgetAllowance = this._ensureTokenBudget(maxTokens);
       if (!budgetAllowance.allowed) {
@@ -342,7 +333,7 @@ export class MultiLLMAgent extends BaseAgent {
         return this._budgetFallbackResponse(llmContext, budgetAllowance.reason);
       }
 
-      console.log(`[${this.id}] Making ${this.llmModel} API call...`);
+      console.log(`[${this.id}] Making ${this.llmModel} API call (maxTokens: ${maxTokens})...`);
 
       const startTime = Date.now();
       const response = await this.llmClient.generateCompletion(
@@ -393,6 +384,12 @@ export class MultiLLMAgent extends BaseAgent {
 
     let prompt = `Task: Generate a ${proposalType} proposal.\n\n`;
 
+    // Add special emphasis for scene/asset_placement tasks
+    if (proposalType === 'asset_placement') {
+      prompt += `🎯 CRITICAL: This is scene generation - the MOST IMPORTANT part of Agent Adventures. Invest maximum effort here.\n\n`;
+      prompt += `Your scene proposal will directly determine the visual quality and audience engagement. Go beyond basic placement - think like a film production designer creating an unforgettable set.\n\n`;
+    }
+
     if (context) {
       prompt += `Context: ${JSON.stringify(context, null, 2)}\n\n`;
     }
@@ -406,11 +403,91 @@ export class MultiLLMAgent extends BaseAgent {
     // Add format guidance based on proposal type
     switch (proposalType) {
       case 'asset_placement':
-        prompt += `\n\nResponse should include: position [x,y,z], element_type, name, scale [x,y,z], and reasoning.`;
+        prompt += `\n\nCREATE A COMPLETE SCENE WITH MULTIPLE BATCHES:`;
+        prompt += `\n\nYou must organize your scene into 3-5 thematic batches (minimum 3). Each batch should serve a distinct purpose:`;
+        prompt += `\n- Foreground/Hero Elements: Primary focal points (2-4 elements)`;
+        prompt += `\n- Midground/Structural: Framing, architecture, context (2-6 elements)`;
+        prompt += `\n- Background/Atmospheric: Depth, atmosphere, environment (2-4 elements)`;
+        prompt += `\n- Optional: Detail layers, lighting elements, narrative props`;
+        prompt += `\n\nEach element needs: element_type (cube/sphere/cylinder/cone), name, position [x,y,z], scale [x,y,z], color [r,g,b]`;
+        prompt += `\n\nIMPORTANT: Provide rich, thoughtful reasoning explaining:`;
+        prompt += `\n- Overall compositional strategy across all batches`;
+        prompt += `\n- How each batch layer contributes to depth and visual hierarchy`;
+        prompt += `\n- Color palette and lighting design across the full scene`;
+        prompt += `\n- Narrative story told through spatial arrangement`;
+        prompt += `\n- Emotional journey from foreground to background`;
         break;
+
+      case 'camera_planning':
+        prompt += `\n\n🎬 DESIGN CAMERA CHOREOGRAPHY (3-5 shots):`;
+        prompt += `\n\nCRITICAL: Create a COHESIVE SHOT SEQUENCE that flows cinematically from shot to shot.`;
+        prompt += `\nYour shots should CHAIN TOGETHER - the end of one shot should naturally lead into the start of the next.`;
+        prompt += `\n\nAvailable shot types:`;
+        prompt += `\n- smoothMove: Linear camera movement between positions with easing`;
+        prompt += `\n- arcShot: Cinematic arc movement (standard or dramatic style)`;
+        prompt += `\n- orbitShot: Orbital movement around a center point`;
+        prompt += `\n\nFor each shot provide:`;
+        prompt += `\n- shotType: "smoothMove" | "arcShot" | "orbitShot"`;
+        prompt += `\n- start_position: [x, y, z] (starting camera position)`;
+        prompt += `\n- end_position: [x, y, z] (ending camera position)`;
+        prompt += `\n- start_target: [x, y, z] (what camera looks at initially)`;
+        prompt += `\n- end_target: [x, y, z] (what camera looks at finally)`;
+        prompt += `\n- duration: number (seconds - vary for pacing)`;
+        prompt += `\n- description: string (shot purpose and transition to next)`;
+        prompt += `\n- easingType (smoothMove): "ease_in" | "ease_out" | "ease_in_out" | "linear"`;
+        prompt += `\n- movementStyle (arcShot): "standard" | "dramatic"`;
+        prompt += `\n\nFor orbitShot, also provide:`;
+        prompt += `\n- center: [x, y, z] (orbit center point)`;
+        prompt += `\n- distance: number (orbit radius)`;
+        prompt += `\n- start_azimuth: number (starting angle in degrees)`;
+        prompt += `\n- end_azimuth: number (ending angle in degrees)`;
+        prompt += `\n- elevation: number (camera height angle)`;
+        prompt += `\n\n🎯 SHOT SEQUENCING PRINCIPLES:`;
+        prompt += `\n1. ESTABLISH → REVEAL → FOCUS (classic progression)`;
+        prompt += `\n   - Start wide to show context, move closer to reveal details, finish on emotional focus`;
+        prompt += `\n2. SMOOTH TRANSITIONS: Each shot's end_position should flow into the next shot's start_position`;
+        prompt += `\n   - If shot 1 ends at [5, -3, 2], shot 2 should start near [5, -3, 2]`;
+        prompt += `\n3. VARY SHOT DURATION: Create rhythm (fast action vs slow reveal)`;
+        prompt += `\n   - Quick cuts: 2-3 seconds, Contemplative shots: 4-6 seconds`;
+        prompt += `\n4. MAINTAIN VISUAL CONTINUITY: Keep the subject in frame across shots`;
+        prompt += `\n   - Don't jump from looking at [0,0,0] to suddenly looking at [10,10,10]`;
+        prompt += `\n5. BUILD EMOTIONAL JOURNEY: Each shot should advance the visual story`;
+        prompt += `\n\nExample 3-shot sequence:`;
+        prompt += `\n• Shot 1 (Wide Establishing): smoothMove from [10, -8, 4] to [8, -6, 3], looking at scene center [0,0,1]`;
+        prompt += `\n  Duration: 4s, ease_in_out - "Establish the full environment and spatial context"`;
+        prompt += `\n• Shot 2 (Medium Reveal): arcShot from [8, -6, 3] to [5, -4, 2.5], revealing hero element`;
+        prompt += `\n  Duration: 3s, dramatic arc - "Sweep closer to reveal the central focal point"`;
+        prompt += `\n• Shot 3 (Close Focus): smoothMove from [5, -4, 2.5] to [3, -2, 2], tight on key detail`;
+        prompt += `\n  Duration: 3s, ease_out - "Draw viewer's attention to the emotional core"`;
+        prompt += `\n\nNotice: Each shot FLOWS into the next, creating one continuous visual narrative`;
+        break;
+
+      case 'audio_narration':
+        prompt += `\n\nDESIGN AUDIO EXPERIENCE:`;
+        prompt += `\n\nCreate atmospheric audio that brings the PLACE to life:`;
+        prompt += `\n\n1. NARRATION (story-driven, NOT technical):`;
+        prompt += `\n- tone: string (e.g., "contemplative", "mysterious", "awe-inspiring")`;
+        prompt += `\n- script: string (the actual narration text)`;
+        prompt += `\n  CRITICAL: Narration describes the SETTING and ATMOSPHERE`;
+        prompt += `\n  - Focus on what the environment feels like, sounds like, breathes like`;
+        prompt += `\n  - May reference implied history/inhabitants without showing them`;
+        prompt += `\n  - Think documentary/nature film style - evoke emotion and wonder`;
+        prompt += `\n  - DO NOT describe technical design decisions or element placement`;
+        prompt += `\n  - DO NOT explain compositional strategy or color theory`;
+        prompt += `\n\n2. MUSIC:`;
+        prompt += `\n- style: string (genre/mood description)`;
+        prompt += `\n- intensity: number (0.0-1.0, how prominent the music is)`;
+        prompt += `\n- notes: string (specific musical direction)`;
+        prompt += `\n\n3. AMBIENT:`;
+        prompt += `\n- environment: string (environmental sound description)`;
+        prompt += `\n- effects: array of strings (specific sound effects)`;
+        prompt += `\n- volume: number (0.0-1.0, how loud ambient sounds are)`;
+        break;
+
       case 'camera_move':
         prompt += `\n\nResponse should include: target_position [x,y,z], target_look_at [x,y,z], movement_duration, and reasoning.`;
         break;
+
       case 'story_advance':
         prompt += `\n\nResponse should include: choice_selected, narrative_impact, and reasoning.`;
         break;
@@ -425,19 +502,36 @@ export class MultiLLMAgent extends BaseAgent {
   _parseProposalResponse(content, llmContext) {
     const { proposalType } = llmContext;
 
+    console.log(`[${this.id}] 🔍 Parsing ${proposalType} response...`);
+
     try {
       const structured = this._deserializeLLMContent(content);
+      console.log(`[${this.id}] ✓ Deserialized:`, structured ? 'SUCCESS' : 'FAILED');
+
       if (structured) {
+        console.log(`[${this.id}] Structured keys:`, Object.keys(structured));
+        if (structured.data) {
+          console.log(`[${this.id}] Data keys:`, Object.keys(structured.data));
+        }
+
         const normalized = this._normalizeStructuredResponse(structured, proposalType);
+        console.log(`[${this.id}] ✓ Normalized:`, normalized ? 'SUCCESS' : 'FAILED');
+
         if (normalized) {
+          console.log(`[${this.id}] ✅ Using normalized LLM response for ${proposalType}`);
           return {
             ...normalized,
             rawResponse: structured
           };
+        } else {
+          console.warn(`[${this.id}] ⚠️ Normalization failed for ${proposalType}, falling back to heuristic extraction`);
         }
+      } else {
+        console.warn(`[${this.id}] ⚠️ Deserialization failed for ${proposalType}, falling back to heuristic extraction`);
       }
 
       // Fallback to heuristic extraction from text content
+      console.log(`[${this.id}] 🔄 Using heuristic extraction for ${proposalType}`);
       const data = this._extractStructuredData(content, proposalType);
       const reasoning = this._extractReasoning(content);
 
@@ -447,7 +541,7 @@ export class MultiLLMAgent extends BaseAgent {
         rawResponse: content
       };
     } catch (error) {
-      console.warn(`[${this.id}] Failed to parse LLM response, using fallback:`, error.message);
+      console.warn(`[${this.id}] ❌ Failed to parse LLM response, using fallback:`, error.message);
 
       // Fallback to a basic structure
       return this._createFallbackResponse(content, proposalType);
@@ -507,10 +601,11 @@ export class MultiLLMAgent extends BaseAgent {
 
   _normalizeStructuredResponse(payload, proposalType) {
     if (!payload || typeof payload !== 'object') {
+      console.log(`[${this.id}] Normalization: payload is not an object`);
       return null;
     }
 
-    const reasoning = payload.reasoning || payload.explanation || payload.analysis;
+    let reasoning = payload.reasoning || payload.explanation || payload.analysis;
     let data = payload.data || payload.parameters || payload.proposal || null;
 
     if (!data && payload.action && payload.parameters) {
@@ -520,7 +615,122 @@ export class MultiLLMAgent extends BaseAgent {
       };
     }
 
+    if (!data) {
+      const proposalData =
+        payload.proposal_data ||
+        payload.proposalData ||
+        (payload.result && (payload.result.data || payload.result.proposal_data));
+      if (proposalData && typeof proposalData === 'object') {
+        data = proposalData;
+      }
+    }
+
+    if (!data && this._looksLikeDirectData(payload, proposalType)) {
+      data = payload;
+    }
+
+    // Some models (e.g., Claude) nest the structured response under the proposalType key
+    const altKey = proposalType
+      ? proposalType.replace(/_([a-z])/g, (_, c) => c.toUpperCase())
+      : null;
+
+    const typedSectionCandidate = proposalType
+      ? (payload[proposalType] ?? (altKey ? payload[altKey] : undefined))
+      : undefined;
+
+    if ((!data || typeof data !== 'object') && typedSectionCandidate) {
+      const typedSection = typedSectionCandidate;
+      if (typedSection && typeof typedSection === 'object') {
+        const innerData = typedSection.data;
+        if (!data && innerData && typeof innerData === 'object') {
+          data = innerData;
+        } else if (!data) {
+          data = typedSection;
+        }
+        if (!reasoning && typeof typedSection.reasoning === 'string') {
+          reasoning = typedSection.reasoning;
+        }
+
+        if (proposalType === 'camera_planning' && data) {
+          if (data.camera_planning && typeof data.camera_planning === 'object') {
+            data = data.camera_planning;
+          }
+
+          const resolveShots = () => {
+            if (Array.isArray(data.shots)) return data.shots;
+            if (Array.isArray(typedSection.shots)) return typedSection.shots;
+            if (Array.isArray(typedSection.camera_planning?.shots)) return typedSection.camera_planning.shots;
+            if (Array.isArray(typedSection.cameraPlanning?.shots)) return typedSection.cameraPlanning.shots;
+            if (Array.isArray(payload.shots)) return payload.shots;
+            return null;
+          };
+
+          const shots = resolveShots();
+          if (shots) {
+            const allowedShotKeys = new Set([
+              'shotType',
+              'start_position',
+              'end_position',
+              'start_target',
+              'end_target',
+              'duration',
+              'description',
+              'easingType',
+              'movementStyle',
+              'center',
+              'distance',
+              'start_azimuth',
+              'end_azimuth',
+              'elevation'
+            ]);
+
+            const sanitisedShots = shots
+              .filter(shot => shot && typeof shot === 'object')
+              .map(shot => {
+                const entry = {};
+                const resolveValue = (primary, aliases = []) => {
+                  if (shot[primary] !== undefined) return shot[primary];
+                  for (const alias of aliases) {
+                    if (shot[alias] !== undefined) return shot[alias];
+                  }
+                  return undefined;
+                };
+
+                entry.shotType = resolveValue('shotType', ['shot_type']);
+                entry.start_position = resolveValue('start_position', ['startPosition']);
+                entry.end_position = resolveValue('end_position', ['endPosition']);
+                entry.start_target = resolveValue('start_target', ['startTarget']);
+                entry.end_target = resolveValue('end_target', ['endTarget']);
+                entry.duration = resolveValue('duration');
+                entry.description = resolveValue('description');
+                entry.easingType = resolveValue('easingType', ['easing_type']);
+                entry.movementStyle = resolveValue('movementStyle', ['movement_style']);
+                entry.center = resolveValue('center');
+                entry.distance = resolveValue('distance');
+                entry.start_azimuth = resolveValue('start_azimuth', ['startAzimuth']);
+                entry.end_azimuth = resolveValue('end_azimuth', ['endAzimuth']);
+                entry.elevation = resolveValue('elevation');
+
+                const sanitised = {};
+                for (const key of allowedShotKeys) {
+                  if (entry[key] !== undefined) {
+                    sanitised[key] = entry[key];
+                  }
+                }
+                return sanitised;
+              })
+              .filter(shot => Object.keys(shot).length > 0);
+
+            if (sanitisedShots.length > 0) {
+              data = { shots: sanitisedShots };
+            }
+          }
+        }
+      }
+    }
+
     if (!data || typeof data !== 'object') {
+      console.log(`[${this.id}] Normalization: data is not an object or missing`);
       return null;
     }
 
@@ -535,10 +745,13 @@ export class MultiLLMAgent extends BaseAgent {
       const required = schema.properties?.data?.required || [];
       const missing = required.filter(key => data[key] === undefined);
       if (missing.length > 0) {
+        console.log(`[${this.id}] Normalization: Missing required fields for ${proposalType}:`, missing);
+        console.log(`[${this.id}] Normalization: Available data keys:`, Object.keys(data));
         return null;
       }
     }
 
+    console.log(`[${this.id}] Normalization: ✅ All validations passed for ${proposalType}`);
     return {
       data,
       reasoning: reasoning || 'LLM response (structured)'
@@ -574,36 +787,73 @@ export class MultiLLMAgent extends BaseAgent {
           properties: {
             data: {
               type: 'object',
-              additionalProperties: true,
-              required: ['element_type', 'name', 'position'],
+              additionalProperties: false,
+              required: ['batches'],
               properties: {
-                element_type: { type: 'string' },
-                name: { type: 'string' },
-                position: {
+                batches: {
                   type: 'array',
+                  description: 'Array of batch groups - organize your scene into 3-5 thematic batches',
                   minItems: 3,
-                  maxItems: 3,
-                  items: { type: 'number' }
-                },
-                scale: {
-                  type: 'array',
-                  minItems: 3,
-                  maxItems: 3,
-                  items: { type: 'number' }
-                },
-                color: {
-                  type: 'array',
-                  minItems: 3,
-                  maxItems: 3,
+                  maxItems: 12,
                   items: {
-                    type: 'number',
-                    minimum: 0,
-                    maximum: 1
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['batch_name', 'elements'],
+                    properties: {
+                      batch_name: {
+                        type: 'string',
+                        description: 'Descriptive name for this batch group (e.g., "foreground_hero_elements", "background_atmosphere", "environmental_details")'
+                      },
+                      elements: {
+                        type: 'array',
+                        description: 'Elements within this batch',
+                        minItems: 1,
+                        maxItems: 8,
+                        items: {
+                          type: 'object',
+                          additionalProperties: true,
+                          required: ['element_type', 'name', 'position'],
+                          properties: {
+                            element_type: { type: 'string', description: 'Type: cube, sphere, cylinder, cone' },
+                            name: { type: 'string', description: 'Unique descriptive name' },
+                            position: {
+                              type: 'array',
+                              description: 'World position [x, y, z] in meters (Z-up)',
+                              minItems: 3,
+                              maxItems: 3,
+                              items: { type: 'number' }
+                            },
+                            scale: {
+                              type: 'array',
+                              description: 'Scale multipliers [x, y, z]',
+                              minItems: 3,
+                              maxItems: 3,
+                              items: { type: 'number' }
+                            },
+                            color: {
+                              type: 'array',
+                              description: 'RGB color [r, g, b] normalized 0-1',
+                              minItems: 3,
+                              maxItems: 3,
+                              items: {
+                                type: 'number',
+                                minimum: 0,
+                                maximum: 1
+                              }
+                            },
+                            parent_path: {
+                              type: 'string',
+                              description: 'USD parent path (default: /World)'
+                            }
+                          }
+                        }
+                      },
+                      description: {
+                        type: 'string',
+                        description: 'Purpose and role of this batch in the overall scene'
+                      }
+                    }
                   }
-                },
-                metadata: {
-                  type: 'object',
-                  additionalProperties: true
                 }
               }
             },
@@ -646,6 +896,93 @@ export class MultiLLMAgent extends BaseAgent {
               type: 'object',
               additionalProperties: true
             }
+          }
+        };
+
+      case 'camera_planning':
+        return {
+          type: 'object',
+          additionalProperties: false,
+          required: ['data', 'reasoning'],
+          properties: {
+            data: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['shots'],
+              properties: {
+                shots: {
+                  type: 'array',
+                  description: 'Array of camera shots for cinematography',
+                  minItems: 3,
+                  maxItems: 5,
+                  items: {
+                    type: 'object',
+                    additionalProperties: false,
+                    required: ['shotType', 'duration', 'description'],
+                    properties: {
+                      shotType: { type: 'string', enum: ['smoothMove', 'arcShot', 'orbitShot'] },
+                      start_position: { type: 'array', minItems: 3, maxItems: 3, items: { type: 'number' } },
+                      end_position: { type: 'array', minItems: 3, maxItems: 3, items: { type: 'number' } },
+                      start_target: { type: 'array', minItems: 3, maxItems: 3, items: { type: 'number' } },
+                      end_target: { type: 'array', minItems: 3, maxItems: 3, items: { type: 'number' } },
+                      duration: { type: 'number', minimum: 0.5 },
+                      description: { type: 'string' },
+                      easingType: { type: 'string', enum: ['ease_in', 'ease_out', 'ease_in_out', 'linear'] },
+                      movementStyle: { type: 'string', enum: ['standard', 'dramatic'] },
+                      center: { type: 'array', minItems: 3, maxItems: 3, items: { type: 'number' } },
+                      distance: { type: 'number' },
+                      start_azimuth: { type: 'number' },
+                      end_azimuth: { type: 'number' },
+                      elevation: { type: 'number' }
+                    }
+                  }
+                }
+              }
+            },
+            reasoning: { type: 'string' }
+          }
+        };
+
+      case 'audio_narration':
+        return {
+          type: 'object',
+          additionalProperties: false,
+          required: ['data', 'reasoning'],
+          properties: {
+            data: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['narration', 'music', 'ambient'],
+              properties: {
+                narration: {
+                  type: 'object',
+                  required: ['tone', 'script'],
+                  properties: {
+                    tone: { type: 'string' },
+                    script: { type: 'string' }
+                  }
+                },
+                music: {
+                  type: 'object',
+                  required: ['style', 'intensity', 'notes'],
+                  properties: {
+                    style: { type: 'string' },
+                    intensity: { type: 'number', minimum: 0, maximum: 1 },
+                    notes: { type: 'string' }
+                  }
+                },
+                ambient: {
+                  type: 'object',
+                  required: ['environment', 'effects', 'volume'],
+                  properties: {
+                    environment: { type: 'string' },
+                    effects: { type: 'array', items: { type: 'string' } },
+                    volume: { type: 'number', minimum: 0, maximum: 1 }
+                  }
+                }
+              }
+            },
+            reasoning: { type: 'string' }
           }
         };
 
@@ -699,16 +1036,70 @@ export class MultiLLMAgent extends BaseAgent {
       case 'asset_placement':
         return {
           data: {
-            element_type: 'cube',
-            name: 'hero_statue',
-            position: [2.0, -1.5, 0.4],
-            scale: [1.2, 1.2, 1.2],
-            color: [0.7, 0.6, 0.5],
-            metadata: {
-              sync_id: 'scene_intro'
-            }
+            batches: [
+              {
+                batch_name: 'foreground_hero_elements',
+                description: 'Primary focal points that draw immediate attention',
+                elements: [
+                  {
+                    element_type: 'cube',
+                    name: 'hero_pedestal',
+                    position: [0, 0, 0.5],
+                    scale: [2.0, 2.0, 1.0],
+                    color: [0.7, 0.6, 0.5]
+                  },
+                  {
+                    element_type: 'sphere',
+                    name: 'mystical_orb',
+                    position: [0, 0, 2.0],
+                    scale: [0.8, 0.8, 0.8],
+                    color: [0.2, 0.6, 0.9]
+                  }
+                ]
+              },
+              {
+                batch_name: 'architectural_framing',
+                description: 'Structural elements that frame the scene and establish scale',
+                elements: [
+                  {
+                    element_type: 'cylinder',
+                    name: 'left_pillar',
+                    position: [-3.0, 0, 2.5],
+                    scale: [0.5, 0.5, 5.0],
+                    color: [0.5, 0.5, 0.6]
+                  },
+                  {
+                    element_type: 'cylinder',
+                    name: 'right_pillar',
+                    position: [3.0, 0, 2.5],
+                    scale: [0.5, 0.5, 5.0],
+                    color: [0.5, 0.5, 0.6]
+                  }
+                ]
+              },
+              {
+                batch_name: 'atmospheric_background',
+                description: 'Environmental details that create depth and atmosphere',
+                elements: [
+                  {
+                    element_type: 'cube',
+                    name: 'distant_platform',
+                    position: [0, -8.0, 0.2],
+                    scale: [6.0, 4.0, 0.4],
+                    color: [0.3, 0.3, 0.4]
+                  },
+                  {
+                    element_type: 'sphere',
+                    name: 'ambient_light_source',
+                    position: [0, -5.0, 8.0],
+                    scale: [1.5, 1.5, 1.5],
+                    color: [1.0, 0.9, 0.7]
+                  }
+                ]
+              }
+            ]
           },
-          reasoning: 'Places hero statue near plaza entrance to anchor the reveal scene.'
+          reasoning: 'Three-layer composition: foreground hero elements create focus with contrasting cube/sphere shapes, architectural pillars frame the scene and establish scale, background elements add depth and atmospheric lighting. The blue mystical orb draws the eye upward while warm background lighting creates inviting ambiance.'
         };
 
       case 'camera_move':
@@ -821,10 +1212,45 @@ export class MultiLLMAgent extends BaseAgent {
         return this._parseAssetPlacementData(content);
       case 'camera_move':
         return this._parseCameraMovementData(content);
+      case 'camera_planning':
+        // camera_planning should come as structured JSON from LLM
+        // If we reach here, parsing failed - return minimal fallback
+        console.warn(`[${this.id}] camera_planning fell through to heuristic extraction - this should not happen`);
+        return { shots: [] };
+      case 'audio_narration':
+        // audio_narration should come as structured JSON from LLM
+        // If we reach here, parsing failed - return minimal fallback
+        console.warn(`[${this.id}] audio_narration fell through to heuristic extraction - this should not happen`);
+        return {
+          narration: { tone: 'neutral', script: 'Scene introduction' },
+          music: { style: 'ambient', intensity: 0.3, notes: 'Background music' },
+          ambient: { environment: 'Indoor space', effects: [], volume: 0.2 }
+        };
       case 'story_advance':
         return this._parseStoryAdvanceData(content);
       default:
         throw new Error(`Unknown proposal type: ${proposalType}`);
+    }
+  }
+
+  _looksLikeDirectData(payload, proposalType) {
+    if (!payload || typeof payload !== 'object') {
+      return false;
+    }
+
+    switch (proposalType) {
+      case 'camera_planning':
+        return Array.isArray(payload.shots);
+      case 'audio_narration':
+        return (
+          typeof payload.narration === 'object' ||
+          typeof payload.music === 'object' ||
+          typeof payload.ambient === 'object'
+        );
+      case 'asset_placement':
+        return Array.isArray(payload.batches);
+      default:
+        return false;
     }
   }
 
@@ -931,10 +1357,21 @@ export class MultiLLMAgent extends BaseAgent {
   _createFallbackResponse(content, proposalType) {
     const data = {
       asset_placement: {
-        position: [0, 0, 0.5],
-        element_type: 'cube',
-        name: `fallback_cube_${Date.now()}`,
-        scale: [1, 1, 1]
+        batches: [
+          {
+            batch_name: 'fallback_batch',
+            description: 'Fallback scene elements',
+            elements: [
+              {
+                element_type: 'cube',
+                name: `fallback_cube_${Date.now()}`,
+                position: [0, 0, 0.5],
+                scale: [1, 1, 1],
+                color: [0.5, 0.5, 0.5]
+              }
+            ]
+          }
+        ]
       },
       camera_move: {
         target_position: [0, 0, 5],
@@ -980,13 +1417,56 @@ export class MultiLLMAgent extends BaseAgent {
       claude: {
         asset_placement: {
           data: {
-            element_type: 'cube',
-            name: `thoughtful_cube_${Date.now()}`,
-            position: [5, 3, 0.5],
-            scale: [1, 1, 1],
-            color: [0.6, 0.4, 0.7]
+            batches: [
+              {
+                batch_name: 'claude_thoughtful_composition',
+                description: 'Carefully considered placement with narrative flow',
+                elements: [
+                  {
+                    element_type: 'cube',
+                    name: `thoughtful_cube_${Date.now()}`,
+                    position: [5, 3, 0.5],
+                    scale: [1, 1, 1],
+                    color: [0.6, 0.4, 0.7]
+                  },
+                  {
+                    element_type: 'sphere',
+                    name: `accent_sphere_${Date.now()}`,
+                    position: [3, 5, 1.0],
+                    scale: [0.8, 0.8, 0.8],
+                    color: [0.4, 0.6, 0.8]
+                  }
+                ]
+              },
+              {
+                batch_name: 'claude_background_elements',
+                description: 'Supporting elements for depth',
+                elements: [
+                  {
+                    element_type: 'cylinder',
+                    name: `support_pillar_${Date.now()}`,
+                    position: [0, 8, 2.5],
+                    scale: [0.3, 0.3, 5.0],
+                    color: [0.5, 0.5, 0.5]
+                  }
+                ]
+              },
+              {
+                batch_name: 'claude_atmospheric_layer',
+                description: 'Atmospheric depth elements',
+                elements: [
+                  {
+                    element_type: 'cube',
+                    name: `platform_${Date.now()}`,
+                    position: [0, 10, 0.1],
+                    scale: [4.0, 2.0, 0.2],
+                    color: [0.3, 0.3, 0.4]
+                  }
+                ]
+              }
+            ]
           },
-          reasoning: 'Carefully considered placement avoiding conflicts, supports narrative flow'
+          reasoning: 'Three-layer composition: foreground focal points, structural supports, and atmospheric depth'
         },
         camera_move: {
           data: {
@@ -1012,13 +1492,63 @@ export class MultiLLMAgent extends BaseAgent {
       gemini: {
         asset_placement: {
           data: {
-            element_type: 'sphere',
-            name: `dynamic_sphere_${Date.now()}`,
-            position: [0, 0, 2.0],
-            scale: [1.5, 1.5, 1.5],
-            color: [1.0, 0.3, 0.1]
+            batches: [
+              {
+                batch_name: 'gemini_bold_centerpiece',
+                description: 'Dynamic visual statement',
+                elements: [
+                  {
+                    element_type: 'sphere',
+                    name: `dynamic_sphere_${Date.now()}`,
+                    position: [0, 0, 2.0],
+                    scale: [1.5, 1.5, 1.5],
+                    color: [1.0, 0.3, 0.1]
+                  },
+                  {
+                    element_type: 'cone',
+                    name: `accent_cone_${Date.now()}`,
+                    position: [-2, 2, 1.5],
+                    scale: [0.8, 0.8, 1.5],
+                    color: [0.9, 0.6, 0.2]
+                  }
+                ]
+              },
+              {
+                batch_name: 'gemini_framing_structure',
+                description: 'Architectural framing elements',
+                elements: [
+                  {
+                    element_type: 'cube',
+                    name: `frame_left_${Date.now()}`,
+                    position: [-4, 0, 1.0],
+                    scale: [0.5, 0.5, 2.0],
+                    color: [0.7, 0.4, 0.2]
+                  },
+                  {
+                    element_type: 'cube',
+                    name: `frame_right_${Date.now()}`,
+                    position: [4, 0, 1.0],
+                    scale: [0.5, 0.5, 2.0],
+                    color: [0.7, 0.4, 0.2]
+                  }
+                ]
+              },
+              {
+                batch_name: 'gemini_background_atmosphere',
+                description: 'Environmental depth and lighting',
+                elements: [
+                  {
+                    element_type: 'sphere',
+                    name: `light_source_${Date.now()}`,
+                    position: [0, -5, 5.0],
+                    scale: [1.0, 1.0, 1.0],
+                    color: [1.0, 0.9, 0.7]
+                  }
+                ]
+              }
+            ]
           },
-          reasoning: 'Bold visual statement with strong spatial presence and color impact'
+          reasoning: 'Bold central sphere creates focal point, framing cubes establish boundaries, background lighting adds atmospheric depth'
         },
         camera_move: {
           data: {
@@ -1189,7 +1719,11 @@ export class MultiLLMAgent extends BaseAgent {
     switch (eventType) {
       case 'proposal:request':
         if (payload.targetAgents?.includes(this.id) || payload.agentType === this.agentType) {
-          await this.generateProposal(payload.batchId, payload.proposalType, payload.context);
+          await this.generateProposal({
+            id: payload.batchId,
+            type: payload.proposalType,
+            ...payload.context
+          });
         }
         return { handled: true };
 
@@ -1202,22 +1736,26 @@ export class MultiLLMAgent extends BaseAgent {
     }
   }
 
-  getMetrics() {
-    const baseMetrics = super.getMetrics();
-    return {
-      ...baseMetrics,
-      competition: this.competitionMetrics,
-      activeProposals: this.activeProposals.size,
-      proposalHistory: this.proposalHistory.length
-    };
-  }
+
 
   // ========== Utility Methods ==========
 
   _loadSystemPrompt(agentType) {
     // In real implementation, would load from configuration or files
     const prompts = {
-      scene: "You are a Scene Agent for Agent Adventures. Focus on spatial reasoning and asset placement with Z-up coordinates. Always query spatial context first.",
+      scene: `You are a Scene Agent for Agent Adventures, responsible for the MOST CRITICAL aspect of the entire workflow: creating compelling, detailed 3D scenes.
+
+IMPORTANCE: Scene generation is the PRIMARY FEATURE of this system. Dedicate maximum effort and creativity to crafting rich, immersive environments. This is where you should invest the most thought, detail, and computational resources.
+
+Your scene proposals should be:
+- Highly detailed with thoughtful spatial composition
+- Visually striking and narratively meaningful
+- Demonstrating sophisticated spatial reasoning with Z-up coordinates
+- Creating multiple interconnected elements that tell a story
+- Showing deep consideration of lighting, scale, color harmony, and spatial relationships
+
+Always query spatial context first and create scenes that viewers will remember. This is the cornerstone of Agent Adventures - make it exceptional.`,
+
       camera: "You are a Camera Agent for Agent Adventures. Create cinematic shots with proper Isaac Sim Z-up coordinates. Query asset transforms before framing.",
       story: "You are a Story Agent for Agent Adventures. Generate engaging narrative choices that integrate with 3D scene elements."
     };

@@ -23,12 +23,7 @@ class MetricsTracker {
       });
     }
 
-    const timeframeSelect = document.getElementById('metrics-timeframe');
-    if (timeframeSelect) {
-      timeframeSelect.addEventListener('change', (e) => {
-        this.updateTimeframe(e.target.value);
-      });
-    }
+
   }
 
   initializeChart() {
@@ -242,30 +237,7 @@ class MetricsTracker {
     this.dashboard.logActivity('system', 'METRICS', 'Metrics reset successfully');
   }
 
-  updateTimeframe(timeframe) {
-    // In a real implementation, this would filter the metrics history
-    // For now, just log the change
-    this.dashboard.logActivity('system', 'METRICS', `Timeframe changed to ${timeframe}`);
 
-    // Could implement different aggregation logic here
-    switch (timeframe) {
-      case '1h':
-        this.maxHistoryPoints = 60; // 1 point per minute
-        break;
-      case '6h':
-        this.maxHistoryPoints = 72; // 1 point per 5 minutes
-        break;
-      case '24h':
-        this.maxHistoryPoints = 48; // 1 point per 30 minutes
-        break;
-    }
-
-    // Trim history if needed
-    if (this.metricsHistory.length > this.maxHistoryPoints) {
-      this.metricsHistory = this.metricsHistory.slice(-this.maxHistoryPoints);
-      this.updateChart();
-    }
-  }
 
   formatNumber(num) {
     if (num >= 1000000) {

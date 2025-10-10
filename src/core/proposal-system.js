@@ -36,11 +36,28 @@ export class Proposal {
     // Type-specific validation
     switch (this.proposalType) {
       case 'asset_placement':
-        if (!this.data.position || !Array.isArray(this.data.position) || this.data.position.length !== 3) {
-          errors.push('Invalid position format for asset placement');
-        }
-        if (!this.data.element_type || !this.data.name) {
-          errors.push('Missing element_type or name for asset placement');
+        // NEW format: batches array
+        if (this.data.batches && Array.isArray(this.data.batches)) {
+          if (this.data.batches.length === 0) {
+            errors.push('Empty batches array for asset placement');
+          }
+          // Validate each batch has required fields
+          for (const batch of this.data.batches) {
+            if (!batch.batch_name) {
+              errors.push('Batch missing batch_name');
+            }
+            if (!batch.elements || !Array.isArray(batch.elements) || batch.elements.length === 0) {
+              errors.push('Batch missing elements array');
+            }
+          }
+        } else {
+          // OLD format fallback: single element (deprecated but allowed for compatibility)
+          if (!this.data.position || !Array.isArray(this.data.position) || this.data.position.length !== 3) {
+            errors.push('Invalid position format for asset placement');
+          }
+          if (!this.data.element_type || !this.data.name) {
+            errors.push('Missing element_type or name for asset placement');
+          }
         }
         break;
 

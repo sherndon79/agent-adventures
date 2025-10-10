@@ -1,20 +1,27 @@
 import { JudgeDecision } from './proposal-system.js';
+import { createLLMClient } from '../llm/llm-client.js';
+import { config } from '../config/environment.js';
 
 /**
  * Individual Judge for evaluating agent proposals
  * Each judge has a specialty and evaluation criteria
  */
 export class Judge {
-  constructor(id, specialty, config = {}) {
+  constructor(id, specialty, judgeConfig = {}) {
     this.id = id;
     this.specialty = specialty; // 'technical', 'story', 'audience', 'visual'
     this.config = {
-      weight: config.weight || 1.0,
-      strictness: config.strictness || 'medium', // 'strict', 'medium', 'lenient'
-      tokenLimit: config.tokenLimit || 50,
-      enableLogging: config.enableLogging !== false,
-      ...config
+      weight: judgeConfig.weight || 1.0,
+      strictness: judgeConfig.strictness || 'medium', // 'strict', 'medium', 'lenient'
+      maxTokens: judgeConfig.maxTokens || config.tokens.maxPerDecision || 2000,
+      enableLogging: judgeConfig.enableLogging !== false,
+      llmModel: judgeConfig.llmModel || 'claude', // Which LLM to use for judging
+      mockMode: judgeConfig.mockMode !== undefined ? judgeConfig.mockMode : false,
+      ...judgeConfig
     };
+
+    // Initialize LLM client for real judging
+    this.llmClient = createLLMClient(this.config.llmModel);
 
     this.metrics = {
       decisionsRendered: 0,
@@ -117,19 +124,122 @@ export class Judge {
   }
 
   /**
-   * Generate evaluation - MOCK IMPLEMENTATION
-   * In real system, would call LLM APIs
+   * Generate evaluation - calls LLM or uses mock based on settings
    */
   async _generateEvaluation(context) {
-    // Mock evaluation based on specialty and proposals
-    return this._mockEvaluation(context);
+    // Use mock mode if configured
+    if (this.config.mockMode) {
+      if (this.config.enableLogging) {
+        console.log(`[Judge ${this.id}] Using mock evaluation (mockMode enabled)`);
+      }
+      return this._mockEvaluation(context);
+    }
+
+    try {
+      // Call real LLM for evaluation
+      if (this.config.enableLogging) {
+        console.log(`[Judge ${this.id}] Calling ${this.config.llmModel} for evaluation...`);
+      }
+
+      const prompt = this._buildEvaluationPrompt(context);
+      const response = await this.llmClient.generateCompletion(
+        this.systemPrompt,
+        prompt,
+        { maxTokens: this.config.maxTokens }
+      );
+
+      // Parse LLM response
+      const evaluation = this._parseEvaluationResponse(response.content, context);
+      return evaluation;
+
+    } catch (error) {
+      console.error(`[Judge ${this.id}] LLM evaluation failed, falling back to mock:`, error.message);
+      return this._mockEvaluation(context);
+    }
+  }
+
+  /**
+   * Build evaluation prompt for LLM
+   */
+  _buildEvaluationPrompt(context) {
+    const { proposals, focus, criteria, proposalType } = context;
+
+    let prompt = `You are evaluating ${proposals.length} proposals for ${proposalType}.\n\n`;
+    prompt += `Your specialty is "${this.specialty}" with focus on: ${focus}\n`;
+    prompt += `Evaluation criteria: ${criteria.join(', ')}\n\n`;
+
+    prompt += `PROPOSALS TO EVALUATE:\n\n`;
+
+    for (const proposal of proposals) {
+      prompt += `--- Proposal from ${proposal.agentId} ---\n`;
+      prompt += `Reasoning: ${proposal.reasoning}\n`;
+      prompt += `Data Summary: ${JSON.stringify(proposal.data, null, 2).substring(0, 500)}...\n\n`;
+    }
+
+    prompt += `\nINSTRUCTIONS:\n`;
+    prompt += `1. Evaluate each proposal based on your specialty criteria\n`;
+    prompt += `2. Choose the BEST proposal (agentId)\n`;
+    prompt += `3. Provide clear reasoning for your decision\n`;
+    prompt += `4. Rate your confidence: high, medium, or low\n`;
+    prompt += `5. Note any concerns\n\n`;
+
+    prompt += `Respond in JSON format:\n`;
+    prompt += `{\n`;
+    prompt += `  "winner": "agent-id-here",\n`;
+    prompt += `  "reasoning": "your detailed reasoning",\n`;
+    prompt += `  "confidence": "high|medium|low",\n`;
+    prompt += `  "concerns": "any concerns or empty string"\n`;
+    prompt += `}\n`;
+
+    return prompt;
+  }
+
+  /**
+   * Parse LLM evaluation response
+   */
+  _parseEvaluationResponse(content, context) {
+    try {
+      // Try to parse as JSON
+      let parsed;
+      if (typeof content === 'string') {
+        // Strip code fences if present
+        const cleaned = content.replace(/```json?\n?/g, '').replace(/```\n?/g, '').trim();
+        const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          parsed = JSON.parse(jsonMatch[0]);
+        } else {
+          throw new Error('No JSON found in response');
+        }
+      } else {
+        parsed = content;
+      }
+
+      // Validate required fields
+      if (!parsed.winner || !parsed.reasoning) {
+        throw new Error('Missing required fields in LLM response');
+      }
+
+      return {
+        winner: parsed.winner,
+        reasoning: parsed.reasoning,
+        confidence: parsed.confidence || 'medium',
+        concerns: parsed.concerns || ''
+      };
+
+    } catch (error) {
+      console.warn(`[Judge ${this.id}] Failed to parse LLM response:`, error.message);
+      console.warn('Raw content:', content);
+
+      // Fallback to mock evaluation
+      return this._mockEvaluation(context);
+    }
   }
 
   /**
    * Mock evaluation logic for testing
    */
   _mockEvaluation(context) {
-    const { proposals, specialty, criteria } = context;
+    const { proposals, specialty } = context;
 
     if (!proposals || proposals.length === 0) {
       return {
@@ -140,89 +250,7 @@ export class Judge {
       };
     }
 
-    // Simple scoring based on specialty
-    const scores = proposals.map(proposal => {
-      let score = 0;
-      let reasoning = [];
-
-      switch (specialty) {
-        case 'technical':
-          // Check spatial data quality
-          if (proposal.spatial?.position) {
-            score += 3;
-            reasoning.push('valid positioning');
-          }
-          if (proposal.data.element_type) {
-            score += 2;
-            reasoning.push('proper element type');
-          }
-          if (proposal.spatial?.position?.[2] >= 0) {
-            score += 2;
-            reasoning.push('Z-up compliance');
-          } else {
-            score -= 1;
-            reasoning.push('coordinate issues');
-          }
-          break;
-
-        case 'story':
-          // Check narrative elements
-          if (proposal.data.story_beat) {
-            score += 3;
-            reasoning.push('clear story advancement');
-          }
-          if (proposal.data.choices?.length > 0) {
-            score += 2;
-            reasoning.push('meaningful choices');
-          }
-          if (proposal.reasoning.includes('narrative') || proposal.reasoning.includes('story')) {
-            score += 1;
-            reasoning.push('story-focused');
-          }
-          break;
-
-        case 'audience':
-          // Check engagement potential
-          if (proposal.reasoning.includes('engagement') || proposal.reasoning.includes('audience')) {
-            score += 3;
-            reasoning.push('audience-focused');
-          }
-          if (proposal.data.choices) {
-            score += 2;
-            reasoning.push('interactive elements');
-          }
-          if (proposal.reasoning.length > 50) {
-            score += 1;
-            reasoning.push('detailed consideration');
-          }
-          break;
-
-        case 'visual':
-          // Check visual/cinematic quality
-          if (proposal.data.target_position || proposal.data.position) {
-            score += 2;
-            reasoning.push('spatial awareness');
-          }
-          if (proposal.data.color || proposal.data.scale) {
-            score += 2;
-            reasoning.push('visual properties');
-          }
-          if (proposal.reasoning.includes('visual') || proposal.reasoning.includes('dramatic')) {
-            score += 2;
-            reasoning.push('visual consideration');
-          }
-          break;
-      }
-
-      // Add randomness to simulate different evaluation perspectives
-      score += Math.random() * 2 - 1; // ±1 random adjustment
-
-      return {
-        agentId: proposal.agentId,
-        score,
-        reasoning: reasoning.join(', ') || 'basic compliance'
-      };
-    });
+    const scores = proposals.map(proposal => this._scoreProposal(proposal, specialty));
 
     // Find winner
     const winner = scores.reduce((best, current) =>
@@ -251,6 +279,81 @@ export class Judge {
       confidence,
       concerns: concerns.join(', ') || '',
       scores // Include individual scores for transparency
+    };
+  }
+
+  _scoreProposal(proposal, specialty) {
+    let score = 0;
+    const reasoning = [];
+
+    switch (specialty) {
+      case 'technical':
+        if (proposal.spatial?.position) {
+          score += 3;
+          reasoning.push('valid positioning');
+        }
+        if (proposal.data.element_type) {
+          score += 2;
+          reasoning.push('proper element type');
+        }
+        if (proposal.spatial?.position?.[2] >= 0) {
+          score += 2;
+          reasoning.push('Z-up compliance');
+        } else {
+          score -= 1;
+          reasoning.push('coordinate issues');
+        }
+        break;
+      case 'story':
+        if (proposal.data.story_beat) {
+          score += 3;
+          reasoning.push('clear story advancement');
+        }
+        if (proposal.data.choices?.length > 0) {
+          score += 2;
+          reasoning.push('meaningful choices');
+        }
+        if (proposal.reasoning.includes('narrative') || proposal.reasoning.includes('story')) {
+          score += 1;
+          reasoning.push('story-focused');
+        }
+        break;
+      case 'audience':
+        if (proposal.reasoning.includes('engagement') || proposal.reasoning.includes('audience')) {
+          score += 3;
+          reasoning.push('audience-focused');
+        }
+        if (proposal.data.choices) {
+          score += 2;
+          reasoning.push('interactive elements');
+        }
+        if (proposal.reasoning.length > 50) {
+          score += 1;
+          reasoning.push('detailed consideration');
+        }
+        break;
+      case 'visual':
+        if (proposal.data.target_position || proposal.data.position) {
+          score += 2;
+          reasoning.push('spatial awareness');
+        }
+        if (proposal.data.color || proposal.data.scale) {
+          score += 2;
+          reasoning.push('visual properties');
+        }
+        if (proposal.reasoning.includes('visual') || proposal.reasoning.includes('dramatic')) {
+          score += 2;
+          reasoning.push('visual consideration');
+        }
+        break;
+    }
+
+    score += Math.random() * 2 - 1; // ±1 random adjustment
+
+    return {
+      agentId: proposal.agentId,
+      score,
+      reasoning: reasoning.join(', ') || 'basic compliance'
     };
   }
 
@@ -357,11 +460,10 @@ export class JudgePanel {
    * Initialize judge panel with different specialties
    */
   _initializeJudges(judgeConfig) {
+    // Default: single Claude judge for cost efficiency
+    // Can be overridden via judgeConfig.judges
     const defaultJudges = [
-      { id: 'tech_judge', specialty: 'technical', weight: 1.2 },
-      { id: 'story_judge', specialty: 'story', weight: 1.0 },
-      { id: 'audience_judge', specialty: 'audience', weight: 1.0 },
-      { id: 'visual_judge', specialty: 'visual', weight: 0.8 }
+      { id: 'claude_judge', specialty: 'technical', weight: 1.0, llmModel: 'claude' }
     ];
 
     const judgeSpecs = judgeConfig.judges || defaultJudges;
@@ -585,6 +687,21 @@ export class JudgePanel {
         await this.evaluateBatch(summary);
       } catch (error) {
         console.error(`[JudgePanel] Failed to evaluate batch ${batchId}:`, error);
+      }
+    });
+
+    this.eventBus.subscribe('platform:settings_updated', (event) => {
+      const { settings } = event.payload;
+      if (settings.judgePanel !== undefined) {
+        const useMock = !settings.judgePanel;
+        this.options.mockMode = useMock;
+
+        // Update all judges' mock mode
+        for (const judge of this.judges.values()) {
+          judge.config.mockMode = useMock;
+        }
+
+        console.log(`[JudgePanel] Judge panel ${settings.judgePanel ? 'ENABLED (real LLM)' : 'DISABLED (using mock)'}`);
       }
     });
   }

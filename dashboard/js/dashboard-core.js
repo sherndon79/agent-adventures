@@ -9,13 +9,9 @@ const DASHBOARD_EVENT_TYPES = Object.freeze({
   SYSTEM_HEALTH: 'system_health',
   METRICS_UPDATE: 'metrics_update',
   STREAM_STATUS: 'stream_status',
-  AGENT_PROPOSAL: 'agent_proposal',
-  JUDGE_DECISION: 'judge_decision',
-  COMPETITION_STARTED: 'competition_started',
-  COMPETITION_VOTING: 'competition_voting',
-  COMPETITION_COMPLETED: 'competition_completed',
   SETTINGS_UPDATED: 'settings_updated',
-  ACTIVITY_LOG: 'activity_log'
+  ACTIVITY_LOG: 'activity_log',
+  AUDIO_MODE_UPDATED: 'audio:mode_updated'
 });
 
 class AgentAdventuresDashboard {
@@ -32,9 +28,9 @@ class AgentAdventuresDashboard {
     this.reconnectAttempts = 0;
     this.systemData = {
       agents: {
-        claude: { status: 'inactive', proposals: 0, wins: 0 },
-        gemini: { status: 'inactive', proposals: 0, wins: 0 },
-        gpt: { status: 'inactive', proposals: 0, wins: 0 }
+        claude: { name: 'Claude', status: 'inactive', proposals: 0, wins: 0, icon: '🧠' },
+        gemini: { name: 'Gemini', status: 'inactive', proposals: 0, wins: 0, icon: '💎' },
+        gpt: { name: 'GPT', status: 'inactive', proposals: 0, wins: 0, icon: '🤖' }
       },
       metrics: {
         totalTokens: 0,
@@ -49,9 +45,7 @@ class AgentAdventuresDashboard {
       }
     };
 
-    this.activeCompetition = null;
     this.messageHandlers = {};
-    this.seenCompetitionBatches = new Set();
 
     this.init();
   }
@@ -62,11 +56,12 @@ class AgentAdventuresDashboard {
     // Initialize UI components
     this.initializeUI();
 
-    // Initialize modules
-    this.initializeModules();
+    // Initialize core message handlers
+    const coreHandlers = this._createMessageHandlers();
+    Object.assign(this.messageHandlers, coreHandlers);
 
-    // Register message handlers after modules are ready
-    this.messageHandlers = this._createMessageHandlers();
+    // Initialize modules (they will add their own handlers)
+    this.initializeModules();
 
     // Start WebSocket connection
     this.connectWebSocket();
@@ -88,16 +83,128 @@ class AgentAdventuresDashboard {
     // Set initial connection status
     this.updateConnectionStatus('connecting');
 
+    // Dynamically create agent cards
+    this.initializeAgentCards();
+
     // Bind event listeners
     this.bindEventListeners();
   }
 
-  bindEventListeners() {
-    // Competition controls
-    document.getElementById('start-competition')?.addEventListener('click', () => {
-      const type = document.getElementById('competition-type')?.value || 'asset_placement';
-      this.startCompetition(type);
+  initializeAgentCards() {
+    const container = document.getElementById('agent-cards');
+    if (!container) return;
+
+    const agentIds = Object.keys(this.systemData.agents);
+    container.innerHTML = agentIds.map(id => {
+      const agent = this.systemData.agents[id];
+      return `
+        <div class="agent-card ${id}" id="${id}-agent">
+          <div class="agent-header">
+            <div class="agent-icon">${agent.icon}</div>
+            <div class="agent-info">
+              <h3>${agent.name}</h3>
+            </div>
+            <div class="agent-status inactive" id="${id}-status">●</div>
+          </div>
+          <div class="agent-stats">
+            <div class="stat">
+              <span class="stat-label">Win Rate:</span>
+              <span class="stat-value" id="${id}-winrate">0%</span>
+            </div>
+            <div class="stat">
+              <span class="stat-label">Proposals:</span>
+              <span class="stat-value" id="${id}-proposals">0</span>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  initAudioModeControls() {
+    // Initialize audio mode from stored settings or default
+    this.currentAudioMode = this.getStoredAudioMode();
+    this.updateAudioModeUI(this.currentAudioMode);
+
+    // Bind click handlers to mode buttons
+    const modeButtons = document.querySelectorAll('.mode-btn');
+    modeButtons.forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const mode = btn.dataset.mode;
+        await this.setAudioMode(mode);
+      });
     });
+  }
+
+  async setAudioMode(mode) {
+    if (!['story', 'commentary', 'mixed'].includes(mode)) {
+      console.error('Invalid audio mode:', mode);
+      return;
+    }
+
+    this.currentAudioMode = mode;
+
+    // Update UI
+    this.updateAudioModeUI(mode);
+
+    // Store preference
+    try {
+      localStorage.setItem('audio-mode', mode);
+    } catch (error) {
+      console.warn('Failed to save audio mode:', error);
+    }
+
+    // Send to backend
+    this.sendCommand('audio', 'set_mode', { mode });
+
+    // Log the change
+    const modeNames = {
+      story: 'Story Mode',
+      commentary: 'Commentary Mode',
+      mixed: 'Mixed Mode'
+    };
+    this.logActivity('system', 'AUDIO', `Switched to ${modeNames[mode]}`);
+  }
+
+  updateAudioModeUI(mode) {
+    // Update button states
+    const modeButtons = document.querySelectorAll('.mode-btn');
+    modeButtons.forEach(btn => {
+      if (btn.dataset.mode === mode) {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    });
+
+    // Update description text
+    const descriptions = {
+      story: 'Story narration with music and ambience',
+      commentary: 'Technical commentary with atmospheric audio',
+      mixed: 'Both narration and commentary with smart mixing'
+    };
+
+    const descElement = document.getElementById('audio-mode-description');
+    if (descElement) {
+      descElement.textContent = descriptions[mode] || descriptions.story;
+    }
+  }
+
+  getStoredAudioMode() {
+    try {
+      const stored = localStorage.getItem('audio-mode');
+      if (stored && ['story', 'commentary', 'mixed'].includes(stored)) {
+        return stored;
+      }
+    } catch (error) {
+      console.warn('Failed to load audio mode from localStorage:', error);
+    }
+    return 'story'; // Default
+  }
+
+  bindEventListeners() {
+    // Audio mode controls
+    this.initAudioModeControls();
 
     // Metrics controls
     document.getElementById('reset-metrics')?.addEventListener('click', () => {
@@ -132,7 +239,7 @@ class AgentAdventuresDashboard {
       // Initialize all dashboard modules
       this.modules.streamViewer = new StreamViewer(this);
       this.modules.storyLoop = new StoryLoopController(this);
-      this.modules.agentCompetition = new AgentCompetition(this);
+
       this.modules.metricsTracker = new MetricsTracker(this);
       this.modules.systemHealth = new SystemHealth(this);
       this.modules.activityLog = new ActivityLog(this);
@@ -157,6 +264,10 @@ class AgentAdventuresDashboard {
       [DASHBOARD_EVENT_TYPES.STREAM_STATUS]: (data) => {
         this.modules.streamViewer?.updateStreamStatus(data);
       },
+      [DASHBOARD_EVENT_TYPES.ACTIVITY_LOG]: (data) => {
+        this.modules.activityLog?.addEntry(data.level, data.source, data.message);
+      },
+      [DASHBOARD_EVENT_TYPES.AUDIO_MODE_UPDATED]: handler(this.handleAudioModeUpdate),
     };
   }
 
@@ -304,6 +415,7 @@ class AgentAdventuresDashboard {
     // Update modules
     this.modules.systemHealth?.updateServiceStatuses();
     this.modules.agentCompetition?.updateAgentStats(this.systemData.agents);
+    this.modules.storyLoop?.handlePlatformStatus(data);
   }
 
   updateSystemServices(services) {
@@ -328,6 +440,32 @@ class AgentAdventuresDashboard {
 
     // Update system data
     this.systemData.system.isaacSim = connected ? 'connected' : (mockMode ? 'mock' : 'disconnected');
+  }
+
+  handleAudioModeUpdate(data = {}) {
+    const { mode } = data;
+    if (!mode || !['story', 'commentary', 'mixed'].includes(mode)) {
+      console.warn('Ignoring invalid audio mode update', data);
+      return;
+    }
+
+    this.currentAudioMode = mode;
+    this.updateAudioModeUI(mode);
+
+    try {
+      localStorage.setItem('audio-mode', mode);
+    } catch (error) {
+      console.warn('Failed to persist audio mode after remote update:', error);
+    }
+
+    const labels = {
+      story: 'Story Mode',
+      commentary: 'Commentary Mode',
+      mixed: 'Mixed Mode'
+    };
+    if (data.source !== 'local') {
+      this.logActivity('system', 'AUDIO', `Audio mode set to ${labels[mode] || mode} (remote)`);
+    }
   }
 
   handleSystemUpdate(data) {
@@ -393,101 +531,12 @@ class AgentAdventuresDashboard {
           this.modules.streamViewer?.updateStreamStatus({ active: false });
           this.logActivity('system', 'STREAM', 'Stream stopped');
           break;
-        case 'competition.start':
-        case 'agents.start_competition':
-          this.onCompetitionStarted({
-            type: data.type,
-            batchId: `sim_${data.type || 'competition'}_${Date.now()}`,
-            simulated: true
-          });
-          this.simulateCompetitionWorkflow(data.type,
-            { batchId: this.activeCompetition?.batchId });
-          break;
+
       }
     }, 500);
   }
 
-  startCompetition(type) {
-    this.logActivity('competition', 'SYSTEM', `Starting ${type} competition`);
-    this.sendCommand('competition', 'start', { type });
-  }
 
-  _normalizeAgentId(agentId = '') {
-    if (this.systemData.agents[agentId]) return agentId;
-    const shorthand = agentId.split('-')[0];
-    return this.systemData.agents[shorthand] ? shorthand : agentId;
-  }
-
-  onCompetitionStarted(data = {}) {
-    const { type, batchId, simulated = false } = data;
-    if (!batchId || !type) return;
-
-    this.activeCompetition = { type, batchId, simulated };
-
-    if (!this.seenCompetitionBatches.has(batchId)) {
-      this.seenCompetitionBatches.add(batchId);
-      this.systemData.metrics.competitions += 1;
-      this.modules.metricsTracker?.updateMetrics(this.systemData.metrics);
-    }
-
-    this.modules.agentCompetition?.startCompetition(type, {
-      batchId,
-      simulated
-    });
-  }
-
-  onAgentProposal(proposal = {}) {
-    const agentId = proposal.agentId || proposal.agent;
-    if (!agentId) return;
-
-    const normalizedAgent = this._normalizeAgentId(agentId);
-    const agentData = this.systemData.agents[normalizedAgent];
-    if (agentData) {
-      agentData.proposals = (agentData.proposals || 0) + 1;
-    }
-
-    const enrichedProposal = {
-      ...proposal,
-      agentId,
-      agent: normalizedAgent,
-      proposalType: proposal.proposalType,
-      reasoning: proposal.reasoning || proposal.summary || '',
-      summary: proposal.summary || proposal.reasoning || ''
-    };
-
-    this.modules.agentCompetition?.handleAgentProposal(enrichedProposal);
-    this.modules.agentCompetition?.updateAgentStats(this.systemData.agents);
-  }
-
-  onJudgeDecision(decision = {}) {
-    const normalizedWinner = this._normalizeAgentId(decision.winner);
-
-    const agentData = this.systemData.agents[normalizedWinner];
-    if (agentData) {
-      agentData.wins = (agentData.wins || 0) + 1;
-    }
-
-    const enrichedDecision = {
-      ...decision,
-      winner: normalizedWinner
-    };
-
-    this.modules.agentCompetition?.handleJudgeDecision(enrichedDecision);
-    this.modules.agentCompetition?.updateAgentStats(this.systemData.agents);
-  }
-
-  onCompetitionVoting(payload = {}) {
-    if (typeof this.modules.agentCompetition?.handleVotingResult === 'function') {
-      this.modules.agentCompetition.handleVotingResult(payload);
-    }
-  }
-
-  onCompetitionCompleted(payload = {}) {
-    if (typeof this.modules.agentCompetition?.completeCompetition === 'function') {
-      this.modules.agentCompetition.completeCompetition(payload);
-    }
-    this.activeCompetition = null;
-  }
 
   onSettingsUpdated(settings = {}) {
     this.currentSettings = {
@@ -505,110 +554,6 @@ class AgentAdventuresDashboard {
 
     this.logActivity('system', 'SETTINGS',
       `Updated: LLM=${this.currentSettings.llmApis}, MCP=${this.currentSettings.mcpCalls}, Stream=${this.currentSettings.streaming}, Judge=${this.currentSettings.judgePanel}`);
-  }
-
-  simulateCompetitionWorkflow(type, options = {}) {
-    const batchId = options.batchId || this.activeCompetition?.batchId || `sim_${type}_${Date.now()}`;
-
-    // Simulate agent proposals arriving over time
-    setTimeout(() => {
-      this.simulateAgentProposals(type, batchId);
-    }, 500);
-
-    // Simulate voting updates
-    setTimeout(() => {
-      this.simulateMockVoting(batchId);
-    }, 2500);
-
-    // Simulate final judge decision shortly after voting
-    setTimeout(() => {
-      this.simulateJudgeDecision(batchId);
-    }, 5000);
-  }
-
-  simulateAgentProposals(type, batchId) {
-    const templates = this.getProposalsForType(type);
-
-    templates.forEach((template, index) => {
-      setTimeout(() => {
-        this.onAgentProposal({
-          batchId,
-          agentId: template.agent,
-          proposalType: type,
-          reasoning: template.reasoning,
-          summary: template.summary,
-          timestamp: Date.now()
-        });
-        this.logActivity('competition', template.agent.toUpperCase(),
-          `Submitted ${type} proposal: "${template.summary}"`);
-      }, index * 600);
-    });
-  }
-
-  simulateMockVoting(batchId) {
-    this.logActivity('competition', 'SYSTEM', 'Audience voting begins! (simulated)');
-
-    const totalVotes = Math.floor(Math.random() * 200) + 100; // 100-300 votes
-    const votingDuration = 30000; // 30 seconds
-
-    let votesReceived = 0;
-    const voteInterval = setInterval(() => {
-      if (votesReceived >= totalVotes) {
-        clearInterval(voteInterval);
-        this.finalizeMockVoting(batchId, totalVotes);
-        return;
-      }
-
-      const batchSize = Math.floor(Math.random() * 10) + 5;
-      votesReceived += batchSize;
-
-      this.updateMockVoteDisplay(Math.min(votesReceived, totalVotes), totalVotes);
-
-    }, 1000);
-
-    // Emit an initial voting snapshot
-    this.onCompetitionVoting({
-      batchId,
-      totalVotes,
-      voteBreakdown: {
-        claude: Math.floor(totalVotes * 0.33),
-        gemini: Math.floor(totalVotes * 0.33),
-        gpt: Math.floor(totalVotes * 0.34)
-      },
-      method: 'mock_audience_voting',
-      timestamp: Date.now()
-    });
-  }
-
-  simulateJudgeDecision(batchId) {
-    const competition = this.activeCompetition && this.activeCompetition.batchId === batchId
-      ? this.activeCompetition
-      : null;
-
-    const type = competition?.type || 'asset_placement';
-    const agents = ['claude', 'gemini', 'gpt'];
-    const winner = competition?.votingWinner || agents[Math.floor(Math.random() * agents.length)];
-
-    const reasoning = {
-      claude: 'Technical excellence with comprehensive spatial analysis and safety considerations',
-      gemini: 'Bold visual impact creating maximum engagement and dramatic composition',
-      gpt: 'Optimal balance of story advancement and audience accessibility'
-    };
-
-    const decision = {
-      batchId,
-      winner,
-      reasoning: reasoning[winner],
-      confidence: 'high',
-      timestamp: Date.now()
-    };
-
-    this.onJudgeDecision(decision);
-    this.logActivity('competition', 'JUDGE', `${winner} wins: ${decision.reasoning}`);
-
-    setTimeout(() => {
-      this.simulateWinnerExecution(winner, type);
-    }, 2000);
   }
 
   resetMetrics() {
@@ -1041,7 +986,8 @@ class AgentAdventuresDashboard {
       llmApis: document.getElementById('toggle-llm-apis').checked,
       mcpCalls: document.getElementById('toggle-mcp-calls').checked,
       streaming: document.getElementById('toggle-streaming').checked,
-      judgePanel: document.getElementById('toggle-judge-panel').checked
+      judgePanel: document.getElementById('toggle-judge-panel').checked,
+      localChat: document.getElementById('local-chat-toggle').checked
     };
 
     // Store settings locally

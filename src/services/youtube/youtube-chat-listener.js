@@ -6,24 +6,33 @@
  */
 
 import { google } from 'googleapis';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
+import path from 'path';
+
+const SETTINGS_PATH = path.resolve(process.cwd(), 'src/config/youtube_settings.json');
 
 export class YouTubeChatListener {
   constructor({ eventBus, apiKey, broadcastId, oauthTokenPath, pollIntervalMs = 5000, logger = console }) {
     if (!eventBus?.emit) {
       throw new Error('EventBus with emit capability is required');
     }
+    // API key or OAuth is still required for authentication
     if (!apiKey && !oauthTokenPath) {
       throw new Error('Either YouTube API key or OAuth token path is required');
     }
-    if (!broadcastId) {
-      throw new Error('YouTube broadcast ID is required');
+
+    // Determine broadcast ID with persistence
+    const persistedId = this._loadIdFromSettings();
+    const initialBroadcastId = persistedId || broadcastId;
+
+    if (!initialBroadcastId) {
+      throw new Error('YouTube broadcast ID is required (either in youtube_settings.json or as an environment variable)');
     }
 
     this.eventBus = eventBus;
     this.apiKey = apiKey;
     this.oauthTokenPath = oauthTokenPath;
-    this.broadcastId = broadcastId;
+    this.broadcastId = initialBroadcastId;
     this.pollIntervalMs = pollIntervalMs;
     this.logger = logger;
 
@@ -295,6 +304,19 @@ export class YouTubeChatListener {
     });
   }
 
+  _loadIdFromSettings() {
+    try {
+      if (existsSync(SETTINGS_PATH)) {
+        const settingsRaw = readFileSync(SETTINGS_PATH, 'utf8');
+        const settings = JSON.parse(settingsRaw);
+        return settings.broadcastId || null;
+      }
+    } catch (error) {
+      this.logger.error(`[YouTubeChatListener] Error loading settings from ${SETTINGS_PATH}:`, error);
+    }
+    return null;
+  }
+
   /**
    * Update average poll latency
    */
@@ -302,6 +324,19 @@ export class YouTubeChatListener {
     const totalPolls = this.metrics.pollCount;
     const currentAverage = this.metrics.averagePollLatency;
     this.metrics.averagePollLatency = ((currentAverage * (totalPolls - 1)) + latency) / totalPolls;
+  }
+
+  async updateBroadcastId(newBroadcastId) {
+    if (this.broadcastId === newBroadcastId) {
+      console.log(`Broadcast ID is already set to ${newBroadcastId}. No update needed.`);
+      return;
+    }
+
+    console.log(`Updating YouTube Broadcast ID from ${this.broadcastId} to ${newBroadcastId}...`);
+    await this.stop();
+    this.broadcastId = newBroadcastId;
+    await this.start();
+    console.log(`YouTube Chat Listener restarted with new Broadcast ID.`);
   }
 }
 

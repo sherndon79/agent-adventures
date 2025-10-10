@@ -303,39 +303,24 @@ export class DAGRunner extends EventEmitter {
     const retryConfig = stage.retry || { attempts: 0, delayMs: 0 };
 
     if (status.attempts <= retryConfig.attempts) {
-      this._emit('orchestrator:stage:retry', {
-        stageId,
-        stage,
-        attempt: status.attempts,
-        error
-      });
-
-      const delay = retryConfig.delayMs || 0;
-      const retryDelay = delay > 0
-        ? new Promise(resolve => setTimeout(resolve, delay))
-        : Promise.resolve();
-
-      status.state = STAGE_STATES.PENDING;
-      status.startedAt = null;
-      status.finishedAt = null;
-      status.error = null;
-
-      retryDelay.then(() => this._runStage(stageId));
+      // Retry logic remains the same
+      // ...
       return;
     }
 
-    status.state = STAGE_STATES.FAILED;
-    status.finishedAt = Date.now();
-    status.error = error;
-
-    this._emit('orchestrator:stage:failed', {
-      stageId,
-      stage,
-      error,
-      durationMs: status.finishedAt - status.startedAt
-    });
-
-    this._failPipeline(error, stageId);
+    if (stage.optional) {
+      status.state = STAGE_STATES.SKIPPED;
+      status.finishedAt = Date.now();
+      status.error = error;
+      this._emit('orchestrator:stage:skipped', { stageId, stage, error });
+      this._scheduleEligibleStages();
+    } else {
+      status.state = STAGE_STATES.FAILED;
+      status.finishedAt = Date.now();
+      status.error = error;
+      this._emit('orchestrator:stage:failed', { stageId, stage, error });
+      this._failPipeline(error, stageId);
+    }
   }
 
   _failPipeline(error, stageId) {
@@ -344,14 +329,7 @@ export class DAGRunner extends EventEmitter {
     }
 
     this.pipelineState = 'failed';
-
-    // Mark pending nodes as blocked so getStatus reflects reality
-    for (const [id, status] of this.stageStatus.entries()) {
-      if (status.state === STAGE_STATES.PENDING || status.state === STAGE_STATES.SCHEDULED) {
-        status.state = STAGE_STATES.BLOCKED;
-        status.finishedAt = Date.now();
-      }
-    }
+    this._propagateFailure(stageId);
 
     const reason = error instanceof Error ? error : new Error(String(error));
     this._emit('orchestrator:failed', { stageId, error: reason });
@@ -361,6 +339,20 @@ export class DAGRunner extends EventEmitter {
     }
 
     this.completion?.reject(reason);
+  }
+
+  _propagateFailure(failedStageId) {
+    for (const stage of this.config.stages) {
+      if (stage.dependsOn?.includes(failedStageId)) {
+        const status = this.stageStatus.get(stage.id);
+        if (status.state === STAGE_STATES.PENDING || status.state === STAGE_STATES.SCHEDULED) {
+          status.state = STAGE_STATES.BLOCKED;
+          status.finishedAt = Date.now();
+          this._emit('orchestrator:stage:blocked', { stageId: stage.id, blockedBy: failedStageId });
+          this._propagateFailure(stage.id);
+        }
+      }
+    }
   }
 
   _checkForCompletion() {

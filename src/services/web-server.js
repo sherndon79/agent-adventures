@@ -8,8 +8,9 @@ import { WebSocketServer } from 'ws';
 import { createServer } from 'http';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { writeFileSync, existsSync, readFileSync } from 'fs';
 import { WorldBuilderClient } from './mcp-clients/worldbuilder-client.js';
-import YouTubeStreamingController from './streaming/youtube-streaming-controller.js';
+
 import {
   DASHBOARD_EVENT_TYPES,
   adaptAgentProposal,
@@ -19,13 +20,14 @@ import {
   adaptPlatformStatus,
   adaptSettings
 } from './dashboard/dashboard-event-adapter.js';
-import streamRoutes from '../routes/streamRoutes.js';
+
 import audioRoutes from '../routes/audioRoutes.js';
 import ambientRoutes from '../routes/ambientRoutes.js';
-import { setupWebSocketServer } from '../controllers/streamController.js';
+import { setupWebSocketServer, getDashboardSockets } from '../controllers/streamController.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+const YOUTUBE_SETTINGS_PATH = join(__dirname, '../config/youtube_settings.json');
 
 export class WebServerService {
   constructor(eventBus, config = {}) {
@@ -40,17 +42,19 @@ export class WebServerService {
     this.app = null;
     this.server = null;
     this.wss = null;
-    this.clients = new Set();
     this.isRunning = false;
     this.worldBuilderClient = null;
-    this.streamingController = null;
+    this.chatMessagePoster = null;
     this.currentSettings = {
       llmApis: true,
       mcpCalls: true,
       streaming: true,
-      judgePanel: true
+      judgePanel: true,
+      audioMode: 'story'
     };
     this.orchestratorManager = null;
+    this.storyLoopManager = null;
+    this.mcpClientManager = null;
   }
 
   /**
@@ -58,6 +62,9 @@ export class WebServerService {
    */
   async initialize() {
     try {
+      // Make this instance globally available for WebSocket handlers
+      global.webServerInstance = this;
+
       // Create Express app
       this.app = express();
 
@@ -67,7 +74,7 @@ export class WebServerService {
 
       // API Routes
     this._setupApiRoutes();
-    this._setupStreamingRoutes();
+
     this._setupAmbientRoutes();
 
       // Create HTTP server
@@ -121,28 +128,17 @@ export class WebServerService {
    * Broadcast data to all connected WebSocket clients
    */
   broadcast(type, data) {
-    if (this.clients.size === 0) return;
+    // Use dashboard sockets from streamController
+    const clients = getDashboardSockets();
 
-    const message = JSON.stringify({
-      type,
-      data,
-      timestamp: Date.now()
-    });
-
-    for (const client of this.clients) {
-      if (client.readyState === client.OPEN) {
-        try {
-          client.send(message);
-        } catch (error) {
-          console.warn('WebSocket send error:', error.message);
-          this.clients.delete(client);
-        }
-      }
-    }
+    this._broadcastExcept(null, type, data);
   }
 
   _broadcastExcept(excluded, type, data) {
-    if (this.clients.size <= 1) return;
+    const clients = getDashboardSockets();
+    if (clients.size === 0) {
+      return;
+    }
 
     const message = JSON.stringify({
       type,
@@ -150,8 +146,9 @@ export class WebServerService {
       timestamp: Date.now()
     });
 
-    for (const client of this.clients) {
-      if (client === excluded || client.readyState !== client.OPEN) {
+    console.log(`[WebServer] Broadcasting ${type} to ${clients.size} client(s)`);
+    for (const client of clients) {
+      if (client === excluded || client.readyState !== 1) {
         continue;
       }
 
@@ -159,7 +156,7 @@ export class WebServerService {
         client.send(message);
       } catch (error) {
         console.warn('WebSocket send error:', error.message);
-        this.clients.delete(client);
+        clients.delete(client);
       }
     }
   }
@@ -190,26 +187,14 @@ export class WebServerService {
    * Initialize streaming controller
    */
   _initializeStreamingController() {
-    try {
-      if (this.currentSettings.streaming) {
-        this.streamingController = new YouTubeStreamingController({
-          mediaBridgeDir: process.env.MEDIA_BRIDGE_DIR,
-          composeFile: process.env.MEDIA_BRIDGE_COMPOSE_FILE,
-          webrtcHealthUrl: process.env.WEBRTC_HEALTH_URL,
-          audioHealthUrl: process.env.AUDIO_HEALTH_URL
-        });
-        console.log('✅ YouTube Streaming Controller initialized');
-      }
-    } catch (error) {
-      console.warn('⚠️ Failed to initialize streaming controller:', error.message);
-    }
+    // This method is now empty, but retained for potential future use.
   }
 
   /**
    * Setup API routes
    */
   _setupApiRoutes() {
-    this.app.use('/api', streamRoutes);
+
     this.app.use('/api/audio', audioRoutes);
 
     // Health check
@@ -217,7 +202,7 @@ export class WebServerService {
       res.json({
         status: 'healthy',
         uptime: process.uptime(),
-        clients: this.clients.size,
+        clients: getDashboardSockets().size,
         timestamp: Date.now()
       });
     });
@@ -348,6 +333,291 @@ export class WebServerService {
       }
     });
 
+    // Get YouTube stream ID endpoint
+    this.app.get('/api/stream/youtube-id', (req, res) => {
+      res.json({
+        streamId: process.env.YOUTUBE_LIVE_BROADCAST_ID || ''
+      });
+    });
+
+    // Local chat message endpoint (for testing without YouTube API)
+    this.app.post('/api/chat/local-message', async (req, res) => {
+      try {
+        const { message } = req.body;
+        const username = 'AgentAdventures';
+        const channelId = 'UC8N2VGl1BoDwy1ke99cQIGw';
+
+        if (!message) {
+          return res.status(400).json({ error: 'Message is required' });
+        }
+
+        // Emit to EventBus with same format as YouTube chat
+        this.eventBus.emit('chat:message', {
+          messageId: `local_${Date.now()}`,
+          text: message,
+          author: {
+            id: channelId,
+            name: username,
+            isModerator: false,
+            isOwner: true,
+            isVerified: false
+          },
+          publishedAt: new Date().toISOString(),
+          type: 'textMessageEvent',
+          platform: 'local'
+        });
+
+        console.log(`💬 [Local Chat] ${username}: ${message}`);
+        res.json({ success: true, username, message });
+      } catch (error) {
+        console.error('❌ Error processing local chat message:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Toggle YouTube chat posting
+    this.app.post('/api/chat/toggle-youtube-posting', async (req, res) => {
+      try {
+        const { enabled } = req.body;
+
+        if (!this.chatMessagePoster) {
+          return res.status(400).json({ error: 'Chat message poster not initialized' });
+        }
+
+        this.chatMessagePoster.setDisabled(!enabled);
+
+        console.log(`📢 [YouTube Chat] Posting ${enabled ? 'enabled' : 'disabled'}`);
+        res.json({
+          success: true,
+          enabled,
+          message: `YouTube chat posting ${enabled ? 'enabled' : 'disabled'}`
+        });
+      } catch (error) {
+        console.error('❌ Error toggling YouTube chat posting:', error);
+        res.status(500).json({ error: error.message });
+      }
+    });
+
+    // Quick test scene endpoint (no LLM, just MCP calls + audio)
+    this.app.post('/api/test/quick-scene', async (req, res) => {
+      try {
+        console.log('🎨 Creating quick test scene with audio...');
+
+        // Clear scene
+        await this.mcpClientManager.callTool('worldbuilder', 'worldbuilder_clear_scene', {
+          path: '/World',
+          confirm: true
+        });
+
+        // Wait for scene clear to complete
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        // Trigger audio generation early (narration TTS + music generation takes time)
+        // This allows audio to generate while we build the scene and setup camera
+        const syncId = 'sample_scene_intro';
+
+        // Create promise to wait for audio ready
+        const audioReadyPromise = new Promise((resolve) => {
+          const timeout = setTimeout(() => {
+            console.log('⏱️ Audio ready timeout - proceeding anyway');
+            resolve(false);
+          }, 10000); // 10 second timeout
+
+          const handler = (data) => {
+            if (data.sync_id === syncId) {
+              console.log('🎵 Audio ready event received, proceeding with camera');
+              clearTimeout(timeout);
+              this.eventBus.off('audio:ready', handler);
+              resolve(true);
+            }
+          };
+
+          this.eventBus.on('audio:ready', handler);
+        });
+
+        this.eventBus.emit('orchestrator:audio:request', {
+          requestId: `test_${Date.now()}`,
+          stageId: 'audio_test',
+          stageConfig: { optional: true },
+          payload: {
+            sync: {
+              id: syncId,
+              channels: ['narration', 'music', 'ambient'],
+              metadata: {
+                scene: 'aetheric_spire_intro'
+              }
+            },
+            requests: [
+              {
+                channel: 'narration',
+                payload: {
+                  text: 'Behold the Aetheric Spire, humming with resonant light—our heroes arrive beneath cascading halos of energy. The ancient tower pulses with otherworldly power, its crystalline surface reflecting countless prismatic streams across the shadowed plaza. What mysteries lie waiting within?',
+                  voice: 'af_heart',
+                  volume: 0.65,
+                  duck_background: true
+                }
+              },
+              {
+                channel: 'music',
+                payload: {
+                  tension_level: 'epic',
+                  intensity: 0.75,
+                  genre: 'orchestral',
+                  duration: 20.0,
+                  transition: {
+                    type: 'crescendo',
+                    duration_ms: 5000
+                  }
+                }
+              },
+              {
+                channel: 'ambient',
+                payload: {
+                  sample_id: 'sonniss2024/scifi/scifi_0002.wav',
+                  fade_out_after: 30,
+                  fade_duration: 3.0,
+                  loop_if_short: true,
+                  volume: 0.35
+                }
+              }
+            ],
+            allowOffline: true
+          }
+        });
+
+        // Create the Aetheric Spire scene from sample adventure (while audio generates)
+        await this.mcpClientManager.callTool('worldbuilder', 'worldbuilder_create_batch', {
+          batch_name: 'orchestrator_showcase',
+          parent_path: '/World',
+          elements: [
+            {
+              element_type: 'cylinder',
+              name: 'aetheric_spire',
+              position: [0, 0, 6],
+              scale: [1.2, 1.2, 12],
+              color: [0.2, 0.8, 1.0]
+            },
+            {
+              element_type: 'sphere',
+              name: 'halo_light_north',
+              position: [0, 6, 4],
+              scale: [1.5, 1.5, 1.5],
+              color: [1.0, 0.85, 0.3]
+            },
+            {
+              element_type: 'sphere',
+              name: 'halo_light_south',
+              position: [0, -6, 4],
+              scale: [1.5, 1.5, 1.5],
+              color: [1.0, 0.85, 0.3]
+            },
+            {
+              element_type: 'sphere',
+              name: 'halo_light_east',
+              position: [6, 0, 4],
+              scale: [1.5, 1.5, 1.5],
+              color: [1.0, 0.85, 0.3]
+            },
+            {
+              element_type: 'sphere',
+              name: 'halo_light_west',
+              position: [-6, 0, 4],
+              scale: [1.5, 1.5, 1.5],
+              color: [1.0, 0.85, 0.3]
+            },
+            {
+              element_type: 'cube',
+              name: 'elevated_plinth',
+              position: [0, 0, 1],
+              scale: [6, 6, 2],
+              color: [0.15, 0.15, 0.22]
+            }
+          ]
+        });
+
+        // Wait for audio to be ready and streaming before camera movement
+        await audioReadyPromise;
+
+        // Execute multi-shot camera sequence (audio is now streaming)
+        const spireCenter = [0, 0, 4];
+
+        // Shot 1: Smooth move approach
+        await this.mcpClientManager.callTool('worldviewer', 'worldviewer_smooth_move', {
+          start_position: [-15, -12, 8],
+          end_position: [-10, -8, 6],
+          start_target: spireCenter,
+          end_target: spireCenter,
+          duration: 3.0,
+          easing_type: 'ease_in_out',
+          execution_mode: 'auto'
+        });
+
+        // Shot 2: Orbital sweep around spire (continues from shot 1's end position)
+        await this.mcpClientManager.callTool('worldviewer', 'worldviewer_orbit_shot', {
+          center: spireCenter,
+          distance: 14,
+          start_azimuth: -60,
+          end_azimuth: 180,
+          elevation: 25,
+          duration: 8.0,
+          start_position: [-10, -8, 6], // Where shot 1 ended
+          start_target: spireCenter,
+          end_target: [0, 0, 6], // Shift focus upward during orbit
+          execution_mode: 'auto'
+        });
+
+        // Shot 3: Arc shot revealing the top of the spire
+        await this.mcpClientManager.callTool('worldviewer', 'worldviewer_arc_shot', {
+          start_position: [10, 8, 6],
+          end_position: [5, 10, 10],
+          start_target: [0, 0, 6],
+          end_target: [0, 0, 10],
+          duration: 3.0,
+          movement_style: 'dramatic',
+          execution_mode: 'auto'
+        });
+
+        console.log('✅ Quick test scene created with multi-shot sequence + audio');
+        res.json({ success: true, message: 'Test scene with audio created successfully' });
+      } catch (error) {
+        console.error('❌ Failed to create test scene:', error);
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
+    this.app.post('/api/youtube/broadcast-id', async (req, res) => {
+      try {
+        const { broadcastId } = req.body;
+        if (!broadcastId) {
+          return res.status(400).json({ success: false, error: 'broadcastId is required' });
+        }
+
+        // Persist the new ID to the settings file
+        try {
+          let settings = {};
+          if (existsSync(YOUTUBE_SETTINGS_PATH)) {
+            settings = JSON.parse(readFileSync(YOUTUBE_SETTINGS_PATH, 'utf8'));
+          }
+          settings.broadcastId = broadcastId;
+          writeFileSync(YOUTUBE_SETTINGS_PATH, JSON.stringify(settings, null, 2));
+        } catch (error) {
+          console.error('❌ Failed to write YouTube settings file:', error);
+          // Non-fatal, but log it.
+        }
+
+        if (this.youtubeChatListener) {
+          await this.youtubeChatListener.updateBroadcastId(broadcastId);
+          console.log(`✅ YouTube Broadcast ID updated to: ${broadcastId}`);
+          res.json({ success: true, message: 'YouTube Broadcast ID updated successfully.' });
+        } else {
+          res.status(503).json({ success: false, error: 'YouTube chat listener is not initialized.' });
+        }
+      } catch (error) {
+        console.error('❌ Failed to update YouTube Broadcast ID:', error);
+        res.status(500).json({ success: false, error: error.message });
+      }
+    });
+
     // Dashboard route (fallback)
     this.app.get('/', (req, res) => {
       res.sendFile(join(this.config.dashboardPath, 'index.html'));
@@ -362,257 +632,26 @@ export class WebServerService {
     this.orchestratorManager = orchestratorManager;
   }
 
+  attachStoryLoop(storyLoopManager) {
+    this.storyLoopManager = storyLoopManager;
+  }
+
+  attachMCPClients(mcpClientManager) {
+    this.mcpClientManager = mcpClientManager;
+  }
+
+  attachChatMessagePoster(chatMessagePoster) {
+    this.chatMessagePoster = chatMessagePoster;
+  }
+
+  attachYouTubeChatListener(youtubeChatListener) {
+    this.youtubeChatListener = youtubeChatListener;
+  }
+
   /**
    * Setup YouTube Streaming API routes
    */
-  _setupStreamingRoutes() {
-    const formatSession = (session = {}) => ({
-      id: session.id,
-      status: session.status,
-      startTime: session.streaming?.startedAt || null,
-      endTime: session.streaming?.endedAt || null,
-      youtubeWatchUrl: session.monitoring?.youtubeWatchUrl || null,
-      webRTCMonitorUrl: session.monitoring?.webrtcUrl || null,
-      audioSource: session.streaming?.audioSource || null,
-      videoBitrateK: session.streaming?.videoBitrateK || null,
-      audioBitrateK: session.streaming?.audioBitrateK || null,
-      fps: session.streaming?.fps || null,
-      primaryRtmpUrl: session.streaming?.primaryUrl || null,
-      backupRtmpUrl: session.streaming?.backupUrl || null,
-      health: session.health || null
-    });
 
-    // POST /api/streaming/youtube/start - Start YouTube streaming session
-    this.app.post('/api/streaming/youtube/start', async (req, res) => {
-      try {
-        if (!this.streamingController) {
-          return res.status(503).json({
-            success: false,
-            error: 'Streaming controller not initialized'
-          });
-        }
-
-        const options = {
-          streamKey: req.body.streamKey || process.env.PRIMARY_STREAM_KEY,
-          backupStreamKey: req.body.backupStreamKey || process.env.BACKUP_STREAM_KEY,
-          primaryUrl: req.body.primaryUrl || process.env.PRIMARY_RTMP_URL,
-          backupUrl: req.body.backupUrl || process.env.BACKUP_RTMP_URL,
-          audioSource: req.body.audioSource || process.env.MEDIA_BRIDGE_AUDIO_SOURCE,
-          audioToken: req.body.audioToken || process.env.MEDIA_BRIDGE_AUDIO_TOKEN || process.env.AUDIO_TOKEN,
-          videoBitrateK: req.body.videoBitrateK || req.body.videoBitrate || process.env.MEDIA_BRIDGE_VIDEO_BITRATE_K,
-          audioBitrateK: req.body.audioBitrateK || req.body.audioBitrate || process.env.MEDIA_BRIDGE_AUDIO_BITRATE_K,
-          fps: req.body.fps || process.env.MEDIA_BRIDGE_FPS,
-          srtUrl: req.body.srtUrl || process.env.MEDIA_BRIDGE_SRT_URL,
-          webrtcHost: req.body.webrtcHost,
-          webrtcPort: req.body.webrtcPort,
-          webrtcPath: req.body.webrtcPath,
-          youtubeWatchUrl: req.body.youtubeWatchUrl || process.env.YOUTUBE_WATCH_URL
-        };
-
-        console.log('🎥 Starting YouTube stream via API', {
-          primaryUrl: options.primaryUrl,
-          backupConfigured: Boolean(options.backupStreamKey),
-          audioSource: options.audioSource,
-          srtUrl: options.srtUrl,
-          videoBitrateK: options.videoBitrateK,
-          audioBitrateK: options.audioBitrateK,
-          fps: options.fps,
-          webrtcHost: options.webrtcHost,
-          webrtcPort: options.webrtcPort
-        });
-        const session = await this.streamingController.startYouTubeStream(options);
-
-        // Broadcast streaming status to dashboard clients
-        this.broadcast(DASHBOARD_EVENT_TYPES.STREAM_STATUS, {
-          status: session.status,
-          session: formatSession(session)
-        });
-
-        res.json({
-          success: true,
-          session: formatSession(session)
-        });
-
-      } catch (error) {
-        console.error('❌ Failed to start YouTube stream', error);
-        res.status(500).json({
-          success: false,
-          error: error.message
-        });
-      }
-    });
-
-    // POST /api/streaming/youtube/:sessionId/stop - Stop YouTube streaming session
-    this.app.post('/api/streaming/youtube/:sessionId/stop', async (req, res) => {
-      try {
-        if (!this.streamingController) {
-          return res.status(503).json({
-            success: false,
-            error: 'Streaming controller not initialized'
-          });
-        }
-
-        const { sessionId } = req.params;
-        console.log('🛑 Stopping YouTube stream via API', { sessionId });
-
-        const session = await this.streamingController.stopYouTubeStream(sessionId);
-
-        // Broadcast streaming status to dashboard clients
-        this.broadcast(DASHBOARD_EVENT_TYPES.STREAM_STATUS, {
-          status: session.status,
-          session: formatSession(session)
-        });
-
-        res.json({
-          success: true,
-          session: formatSession(session)
-        });
-
-      } catch (error) {
-        console.error('❌ Failed to stop YouTube stream', error);
-        res.status(500).json({
-          success: false,
-          error: error.message
-        });
-      }
-    });
-
-    // GET /api/streaming/youtube/:sessionId/status - Get session status
-    this.app.get('/api/streaming/youtube/:sessionId/status', async (req, res) => {
-      try {
-        if (!this.streamingController) {
-          return res.status(503).json({
-            success: false,
-            error: 'Streaming controller not initialized'
-          });
-        }
-
-        const { sessionId } = req.params;
-        const session = await this.streamingController.getSessionStatus(sessionId);
-
-        if (!session) {
-          return res.status(404).json({
-            success: false,
-            error: 'Session not found'
-          });
-        }
-
-        res.json({
-          success: true,
-          session: formatSession(session)
-        });
-
-      } catch (error) {
-        console.error('❌ Failed to get YouTube stream status', error);
-        res.status(500).json({
-          success: false,
-          error: error.message
-        });
-      }
-    });
-
-    // GET /api/streaming/youtube/sessions - List active sessions
-    this.app.get('/api/streaming/youtube/sessions', async (req, res) => {
-      try {
-        if (!this.streamingController) {
-          return res.status(503).json({
-            success: false,
-            error: 'Streaming controller not initialized'
-          });
-        }
-
-        const health = await this.streamingController.performHealthChecks();
-        this.streamingController.ensureSessionFromHealth(health);
-        const sessions = this.streamingController.getActiveSessions();
-
-        res.json({
-          success: true,
-          sessions: sessions.map(formatSession),
-          count: sessions.length
-        });
-
-      } catch (error) {
-        console.error('❌ Failed to list YouTube streams', error);
-        res.status(500).json({
-          success: false,
-          error: error.message
-        });
-      }
-    });
-
-    // GET /api/streaming/health - Get streaming system health
-    this.app.get('/api/streaming/health', async (req, res) => {
-      try {
-        if (!this.streamingController) {
-          return res.status(503).json({
-            success: false,
-            error: 'Streaming controller not initialized'
-          });
-        }
-
-        const health = await this.streamingController.performHealthChecks();
-        this.streamingController.ensureSessionFromHealth(health);
-        const overall = Array.isArray(health)
-          ? health.every(item => item.status === 'ok')
-          : false;
-
-        res.json({
-          success: true,
-          health: {
-            overall
-          },
-          details: health,
-          sessions: this.streamingController.getActiveSessions().map(formatSession)
-        });
-
-      } catch (error) {
-        console.error('❌ Streaming health check failed', error);
-        res.status(500).json({
-          success: false,
-          health: {
-            overall: false
-          },
-          details: [],
-          error: error.message
-        });
-      }
-    });
-
-    // GET /api/streaming/youtube/presets - Get quality presets
-    this.app.get('/api/streaming/youtube/presets', (req, res) => {
-      const presets = {
-        '720p30': {
-          name: '720p 30fps (HD)',
-          width: 1280,
-          height: 720,
-          fps: 30,
-          bitrate: 2500,
-          format: '720p'
-        },
-        '1080p30': {
-          name: '1080p 30fps (Full HD)',
-          width: 1920,
-          height: 1080,
-          fps: 30,
-          bitrate: 4000,
-          format: '1080p'
-        },
-        '1080p60': {
-          name: '1080p 60fps (Full HD)',
-          width: 1920,
-          height: 1080,
-          fps: 60,
-          bitrate: 6000,
-          format: '1080p'
-        }
-      };
-
-      res.json({
-        success: true,
-        presets
-      });
-    });
-  }
 
   /**
    * Setup WebSocket server
@@ -625,48 +664,56 @@ export class WebServerService {
    * Setup event listeners for platform events
    */
   _setupEventListeners() {
-    // Listen to platform events and broadcast to dashboard with normalised payloads
-    this.eventBus.subscribe('platform:started', (event) => {
-      this.broadcast(
-        DASHBOARD_EVENT_TYPES.PLATFORM_STARTED,
-        adaptPlatformStatus(event.payload)
-      );
+    // Chat message forwarding to dashboard
+    this.eventBus.on('chat:message', (event) => {
+      const payload = event.payload || event;
+      this.broadcast('chat:message', payload);
     });
 
-    this.eventBus.subscribe('agent:proposal', (event) => {
-      const adapted = adaptAgentProposal(event.payload);
-      if (adapted.agentId) {
-        this.broadcast(DASHBOARD_EVENT_TYPES.AGENT_PROPOSAL, adapted);
-      }
+    // Story loop event forwarding to dashboard
+    const storyLoopEvents = [
+      'loop:genres_ready',
+      'loop:voting_started',
+      'loop:voting_complete',
+      'loop:competition_started',
+      'loop:judging_started',
+      'loop:construction_started',
+      'loop:batch_created',
+      'loop:construction_completed',
+      'loop:presentation_started',
+      'loop:cleanup_started',
+      'loop:cleanup_complete',
+      'loop:phase_changed',
+      'vote:received',
+      'timer:countdown',
+      'timer:started',
+      'timer:complete',
+      'voting:started',
+      'voting:stopped',
+      'voting:complete'
+    ];
+
+    storyLoopEvents.forEach(eventType => {
+      this.eventBus.on(eventType, (event) => {
+        const payload = event.payload || event;
+        this.broadcast(eventType, payload);
+      });
     });
 
-    this.eventBus.subscribe('proposal:decision_made', (event) => {
-      this.broadcast(
-        DASHBOARD_EVENT_TYPES.JUDGE_DECISION,
-        adaptJudgeDecision(event.payload)
-      );
-    });
+    this._setupActivityLogForwarding();
+  }
 
-    this.eventBus.subscribe('competition:voting_result', (event) => {
-      this.broadcast(
-        DASHBOARD_EVENT_TYPES.COMPETITION_VOTING,
-        adaptCompetitionVoting(event.payload)
-      );
-    });
+  _setupActivityLogForwarding() {
+    this.eventBus.on('*', (eventType, event) => {
+      // Avoid echoing dashboard-specific events
+      if (eventType.startsWith('dashboard:')) return;
 
-    this.eventBus.subscribe('competition:completed', (event) => {
-      this.broadcast(
-        DASHBOARD_EVENT_TYPES.COMPETITION_COMPLETED,
-        adaptCompetitionCompleted(event.payload)
-      );
-    });
-
-    this.eventBus.subscribe('system:metrics', (event) => {
-      this.broadcast(DASHBOARD_EVENT_TYPES.SYSTEM_METRICS, event.payload);
-    });
-
-    this.eventBus.subscribe('stream:status', (event) => {
-      this.broadcast(DASHBOARD_EVENT_TYPES.STREAM_STATUS, event.payload);
+      const payload = event.payload || event;
+      this.broadcast(DASHBOARD_EVENT_TYPES.ACTIVITY_LOG, {
+        level: 'system', // Or derive from event type
+        source: eventType,
+        message: JSON.stringify(payload)
+      });
     });
   }
 
@@ -674,6 +721,7 @@ export class WebServerService {
    * Handle messages from WebSocket clients
    */
   _handleClientMessage(ws, data) {
+    console.log('[WebServer] Received client message:', data.type, data);
     switch (data.type) {
       case 'ping':
         ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
@@ -684,7 +732,7 @@ export class WebServerService {
         ws.send(JSON.stringify({
           type: DASHBOARD_EVENT_TYPES.PLATFORM_STATUS,
           data: adaptPlatformStatus({
-            clients: this.clients.size,
+            clients: getDashboardSockets().size,
             uptime: process.uptime()
           }),
           timestamp: Date.now()
@@ -692,14 +740,93 @@ export class WebServerService {
         break;
 
       case 'command':
-        // Handle dashboard commands
-        this._handleDashboardCommand(ws, data);
+        // Handle commands from the dashboard
+        if (data.command === 'start_story_loop') {
+          this._handleStartStoryLoop(ws);
+          return;
+        } else if (data.command === 'stop_story_loop') {
+          this._handleStopStoryLoop(ws);
+          return;
+        } else {
+          // Handle other dashboard commands
+          this._handleDashboardCommand(ws, data);
+        }
         break;
 
       default:
         if (this.config.enableLogging) {
           console.log('Unknown client message type:', data.type);
         }
+    }
+  }
+
+  /**
+   * Handle start story loop command
+   */
+  async _handleStartStoryLoop(ws) {
+    if (!this.storyLoopManager) {
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: 'Story loop manager not available',
+        timestamp: Date.now()
+      }));
+      return;
+    }
+
+    try {
+      console.log('▶️ Starting story loop via dashboard');
+      await this.storyLoopManager.start();
+
+      ws.send(JSON.stringify({
+        type: 'story_loop:started',
+        timestamp: Date.now()
+      }));
+
+      this.broadcast('story_loop:started', {
+        timestamp: Date.now()
+      });
+    } catch (error) {
+      console.error('❌ Failed to start story loop:', error);
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: `Failed to start story loop: ${error.message}`,
+        timestamp: Date.now()
+      }));
+    }
+  }
+
+  /**
+   * Handle stop story loop command
+   */
+  _handleStopStoryLoop(ws) {
+    if (!this.storyLoopManager) {
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: 'Story loop manager not available',
+        timestamp: Date.now()
+      }));
+      return;
+    }
+
+    try {
+      console.log('⏹️ Stopping story loop via dashboard');
+      this.storyLoopManager.stop();
+
+      ws.send(JSON.stringify({
+        type: 'story_loop:stopped',
+        timestamp: Date.now()
+      }));
+
+      this.broadcast('story_loop:stopped', {
+        timestamp: Date.now()
+      });
+    } catch (error) {
+      console.error('❌ Failed to stop story loop:', error);
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: `Failed to stop story loop: ${error.message}`,
+        timestamp: Date.now()
+      }));
     }
   }
 
@@ -712,6 +839,7 @@ export class WebServerService {
     if (module === 'system' && command === 'get_status') {
       // Send current platform status including agent information
       const platformStatus = this._getPlatformStatus();
+      console.log('[WebServer] Sending platform status:', JSON.stringify(platformStatus, null, 2));
       ws.send(JSON.stringify({
         type: DASHBOARD_EVENT_TYPES.PLATFORM_STATUS,
         data: adaptPlatformStatus(platformStatus),
@@ -722,6 +850,10 @@ export class WebServerService {
     if (module === 'competition' && command === 'start') {
       // Handle competition start command
       this._handleCompetitionStart(ws, commandData);
+    }
+
+    if (module === 'audio' && command === 'set_mode') {
+      this._handleAudioModeChange(ws, commandData);
     }
 
     if (module === 'settings' && command === 'update') {
@@ -791,6 +923,17 @@ export class WebServerService {
   _handleSettingsUpdate(ws, settings) {
     console.log(`⚙️ Updating service settings:`, settings);
 
+    // Handle local chat toggle
+    if (settings.localChat !== undefined && this.youtubeChatListener) {
+      if (settings.localChat) {
+        this.youtubeChatListener.stop();
+        console.log('▶️ YouTube Chat Listener stopped due to local chat activation.');
+      } else {
+        this.youtubeChatListener.start();
+        console.log('▶️ YouTube Chat Listener started due to local chat deactivation.');
+      }
+    }
+
     // Emit settings update event to the platform
     this.eventBus.emit('platform:settings_updated', {
       settings,
@@ -823,6 +966,45 @@ export class WebServerService {
   }
 
   /**
+   * Handle audio mode change command
+   */
+  _handleAudioModeChange(ws, commandData = {}) {
+    const { mode } = commandData;
+
+    const validModes = ['story', 'commentary', 'mixed'];
+    if (!validModes.includes(mode)) {
+      console.warn('[WebServer] Ignoring invalid audio mode:', mode);
+      ws.send(JSON.stringify({
+        type: 'audio:mode_error',
+        data: { mode, error: 'Invalid audio mode' },
+        timestamp: Date.now()
+      }));
+      return;
+    }
+
+    this.currentSettings = {
+      ...this.currentSettings,
+      audioMode: mode
+    };
+
+    console.log(`[WebServer] Audio mode changed to ${mode}`);
+
+    const broadcastMessage = {
+      mode,
+      timestamp: Date.now(),
+      source: 'dashboard'
+    };
+
+    ws.send(JSON.stringify({
+      type: DASHBOARD_EVENT_TYPES.AUDIO_MODE_UPDATED,
+      data: { ...broadcastMessage, source: 'local' },
+      timestamp: Date.now()
+    }));
+
+    this._broadcastExcept(ws, DASHBOARD_EVENT_TYPES.AUDIO_MODE_UPDATED, broadcastMessage);
+  }
+
+  /**
    * Get current platform status
    */
   _getPlatformStatus() {
@@ -834,12 +1016,19 @@ export class WebServerService {
 
     const isaacConnected = !mcpMockMode && Boolean(this.worldBuilderClient);
 
+    // Get story loop status
+    const storyLoopStatus = this.storyLoopManager?.getStatus() || {
+      phase: 'idle',
+      iteration: 0
+    };
+    const isLoopRunning = storyLoopStatus.phase !== 'idle';
+
     return {
       agentsStarted: 3, // This should come from the agent manager
       agentsFailed: 0,
       startTime: Date.now(),
       uptime: process.uptime(),
-      clients: this.clients.size,
+      clients: getDashboardSockets().size,
       services: {
         isaacSim: mcpMockMode ? 'mock' : 'healthy',
         eventBus: 'healthy',
@@ -856,6 +1045,11 @@ export class WebServerService {
           worldStreamer: process.env.WORLDSTREAMER_MCP_URL,
           worldRecorder: process.env.WORLDRECORDER_MCP_URL
         }
+      },
+      storyLoop: {
+        running: isLoopRunning,
+        phase: storyLoopStatus.phase,
+        iteration: storyLoopStatus.iteration
       }
     };
   }
@@ -928,7 +1122,7 @@ export class WebServerService {
     return {
       running: this.isRunning,
       port: this.config.port,
-      clients: this.clients.size,
+      clients: getDashboardSockets().size,
       uptime: this.isRunning ? process.uptime() : 0
     };
   }

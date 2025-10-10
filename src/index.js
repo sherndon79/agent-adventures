@@ -8,11 +8,11 @@
 import path from 'node:path';
 import { pathToFileURL } from 'url';
 
-import { EventBus } from './core/event-bus.js';
+import { eventBus } from './core/event-bus.js';
 import { StoryState } from './core/story-state.js';
 import { AgentManager } from './core/agent-manager.js';
-import { CompetitionManager } from './core/competition-manager.js';
-import { StoryLoopManager } from './core/story-loop-manager.js';
+
+import { StoryLoopManager } from './story-loop/StoryLoopManager.js';
 import { WebServerService } from './services/web-server.js';
 import { MCPClientManager } from './services/mcp-clients/index.js';
 import { OrchestratorManager } from './orchestrator/index.js';
@@ -20,6 +20,7 @@ import YouTubeChatListener from './services/youtube/youtube-chat-listener.js';
 import { ChatMessagePoster } from './services/chat/chat-message-poster.js';
 import { VoteCollector } from './services/voting/vote-collector.js';
 import { VoteTimer } from './services/voting/vote-timer.js';
+import { JudgePanel } from './core/judge-panel.js';
 
 class AdventuresPlatform {
   constructor(config = {}) {
@@ -101,7 +102,6 @@ class AdventuresPlatform {
     this.eventBus = null;
     this.storyState = null;
     this.agentManager = null;
-    this.competitionManager = null;
     this.webServer = null;
     this.mcpClientManager = null;
     this.orchestratorManager = null;
@@ -113,6 +113,7 @@ class AdventuresPlatform {
     this.chatMessagePoster = null;
     this.voteCollector = null;
     this.voteTimer = null;
+    this.judgePanel = null;
     this.storyLoopManager = null;
   }
 
@@ -342,8 +343,8 @@ class AdventuresPlatform {
   async _initializeCore() {
     console.log('⚙️ Initializing core components...');
 
-    // Create event bus
-    this.eventBus = new EventBus(this.config.eventBus);
+    // Use the singleton event bus
+    this.eventBus = eventBus;
     console.log('   ✓ Event Bus initialized');
 
     // Create story state
@@ -368,16 +369,12 @@ class AdventuresPlatform {
     this.agentManager = new AgentManager(dependencies);
     console.log('   ✓ Agent Manager initialized');
 
-    // Create competition manager
-    this.competitionManager = new CompetitionManager(this.eventBus, {
-      proposalTimeout: 30000,
-      judgeTimeout: 10000,
-      mockMode: true
-    });
-    console.log('   ✓ Competition Manager initialized');
+
 
     // Create web server with event bus integration
     this.webServer = new WebServerService(this.eventBus, this.config.webServer);
+    this.webServer.attachMCPClients(this.mcpClientManager);
+    this.webServer.storyState = this.storyState; // Make story state accessible for WebSocket state sync
     console.log('   ✓ Web Server initialized');
 
     this.orchestratorManager = new OrchestratorManager({
@@ -458,54 +455,66 @@ class AdventuresPlatform {
         console.log('   ✓ YouTube chat listener initialized');
       } catch (error) {
         console.error('   ⚠️ YouTube chat listener failed to initialize:', error.message);
-        console.log('   ℹ️ Story loop will be disabled (requires YouTube chat)');
         this.youtubeChatListener = null;
       }
-
-      // Initialize story loop components (requires YouTube chat)
-      // Chat message poster requires liveChatId from listener
-      const liveChatId = this.youtubeChatListener?.liveChatId;
-      if (this.youtubeChatListener && liveChatId) {
-        this.chatMessagePoster = new ChatMessagePoster({
-          apiKey: chatApiKey,
-          oauthTokenPath,
-          liveChatId
-        });
-        console.log('   ✓ Chat message poster initialized');
-
-        // Initialize voting components
-        const selfTestChannelId = process.env.YOUTUBE_CHANNEL_ID || null;
-        this.voteCollector = new VoteCollector({
-          eventBus: this.eventBus,
-          selfTestChannelId
-        });
-        if (selfTestChannelId) {
-          console.log('   ✓ Vote collector initialized (self-test mode enabled)');
-        } else {
-          console.log('   ✓ Vote collector initialized');
-        }
-
-        this.voteTimer = new VoteTimer({
-          eventBus: this.eventBus,
-          duration: this.config.storyLoop.voteDuration,
-          suppressNotifications: !!selfTestChannelId // Suppress in self-test mode
-        });
-        console.log(`   ✓ Vote timer initialized${selfTestChannelId ? ' (self-test mode - notifications suppressed)' : ''}`);
-
-        // Initialize story loop manager
-        this.storyLoopManager = new StoryLoopManager({
-          eventBus: this.eventBus,
-          storyState: this.storyState,
-          mcpClients: this.mcpClientManager,
-          chatPoster: this.chatMessagePoster,
-          voteCollector: this.voteCollector,
-          voteTimer: this.voteTimer
-        });
-        console.log('   ✓ Story loop manager initialized');
-      }
     } else {
-      console.log('   ℹ️ YouTube chat listener disabled (missing YOUTUBE_API_KEY or YOUTUBE_LIVE_BROADCAST_ID)');
-      console.log('   ℹ️ Story loop disabled (requires YouTube chat)');
+      console.log('   ℹ️ YouTube chat listener disabled (local chat enabled or missing config)');
+    }
+
+    // Initialize story loop components if chat is available
+    if (this.youtubeChatListener || process.env.USE_LOCAL_CHAT === 'true') {
+      if (this.youtubeChatListener) {
+        const liveChatId = this.youtubeChatListener.liveChatId;
+        if (liveChatId) {
+          const chatApiKey = process.env.YOUTUBE_API_KEY;
+          const oauthTokenPath = process.env.YOUTUBE_OAUTH_TOKEN_PATH;
+          const disableChatPosting = process.env.DISABLE_YOUTUBE_CHAT_POSTING === 'true';
+          this.chatMessagePoster = new ChatMessagePoster({
+            apiKey: chatApiKey,
+            oauthTokenPath,
+            liveChatId,
+            disabled: disableChatPosting
+          });
+          console.log(`   ✓ Chat message poster initialized${disableChatPosting ? ' (disabled)' : ''}`);
+          this.webServer.attachChatMessagePoster(this.chatMessagePoster);
+        }
+      }
+
+      // Initialize voting and story loop components
+      const selfTestChannelId = process.env.YOUTUBE_CHANNEL_ID || null;
+      this.voteCollector = new VoteCollector({
+        eventBus: this.eventBus,
+        selfTestChannelId
+      });
+      console.log(`   ✓ Vote collector initialized${selfTestChannelId ? ' (self-test mode)' : ''}`);
+
+      this.voteTimer = new VoteTimer({
+        eventBus: this.eventBus,
+        duration: this.config.storyLoop.voteDuration,
+        suppressNotifications: !!selfTestChannelId
+      });
+      console.log(`   ✓ Vote timer initialized${selfTestChannelId ? ' (self-test mode)' : ''}`);
+
+      this.judgePanel = new JudgePanel(this.eventBus, {
+        enableLogging: true,
+        decisionTimeout: Number.parseInt(process.env.JUDGE_PANEL_TIMEOUT_MS || '15000', 10)
+      });
+      console.log('   ✓ Judge panel initialized');
+
+      this.storyLoopManager = new StoryLoopManager({
+        eventBus: this.eventBus,
+        storyState: this.storyState,
+        agentManager: this.agentManager,
+        mcpClients: this.mcpClientManager,
+        chatPoster: this.chatMessagePoster, // Can be null for local chat
+        voteCollector: this.voteCollector,
+        voteTimer: this.voteTimer,
+        judgePanel: this.judgePanel
+      });
+      console.log('   ✓ Story loop manager initialized');
+      this.webServer?.attachStoryLoop?.(this.storyLoopManager);
+    } else {
+      console.log('   ℹ️ Story loop disabled (chat listener not available)');
     }
   }
 

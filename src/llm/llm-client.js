@@ -17,49 +17,44 @@ export class LLMClient {
   _getProviderConfig(provider) {
     switch (provider) {
       case 'claude':
-        const responseFormatBeta = config.llm.anthropic.responseFormatBeta;
-        const anthropicHeaders = {
-          'x-api-key': config.llm.anthropic.apiKey,
-          'anthropic-version': '2023-06-01',
-          'content-type': 'application/json'
-        };
-
-        if (responseFormatBeta) {
-          anthropicHeaders['anthropic-beta'] = responseFormatBeta;
+        if (!process.env.ANTHROPIC_API_KEY) {
+          throw new Error('ANTHROPIC_API_KEY environment variable not set.');
         }
-
         return {
-          apiKey: config.llm.anthropic.apiKey,
+          apiKey: process.env.ANTHROPIC_API_KEY,
           baseURL: 'https://api.anthropic.com/v1/messages',
           model: config.llm.anthropic.model,
-          maxTokens: config.llm.anthropic.maxTokens,
-          headers: anthropicHeaders,
-          supportsResponseFormat: Boolean(responseFormatBeta)
+          headers: {
+            'x-api-key': process.env.ANTHROPIC_API_KEY,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json'
+          }
         };
-
       case 'gpt':
+        if (!process.env.OPENAI_API_KEY) {
+          throw new Error('OPENAI_API_KEY environment variable not set.');
+        }
         return {
-          apiKey: config.llm.openai.apiKey,
+          apiKey: process.env.OPENAI_API_KEY,
           baseURL: 'https://api.openai.com/v1/chat/completions',
           model: config.llm.openai.model,
-          maxTokens: config.llm.openai.maxTokens,
           headers: {
-            'Authorization': `Bearer ${config.llm.openai.apiKey}`,
+            'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
             'Content-Type': 'application/json'
           }
         };
-
       case 'gemini':
+        if (!process.env.GOOGLE_API_KEY) {
+          throw new Error('GOOGLE_API_KEY environment variable not set.');
+        }
         return {
-          apiKey: config.llm.google.apiKey,
-          baseURL: `https://generativelanguage.googleapis.com/v1beta/models/${config.llm.google.model}:generateContent?key=${config.llm.google.apiKey}`,
+          apiKey: process.env.GOOGLE_API_KEY,
+          baseURL: `https://generativelanguage.googleapis.com/v1beta/models/${config.llm.google.model}:generateContent?key=${process.env.GOOGLE_API_KEY}`,
           model: config.llm.google.model,
-          maxTokens: config.llm.google.maxTokens,
           headers: {
             'Content-Type': 'application/json'
           }
         };
-
       default:
         throw new Error(`Unsupported LLM provider: ${provider}`);
     }
@@ -84,6 +79,25 @@ export class LLMClient {
 
       if (!response.ok) {
         const errorData = await response.text();
+
+        // Check for rate limit / quota errors
+        if (response.status === 429 || response.status === 529) {
+          const error = new Error(`${this.provider} rate limit exceeded`);
+          error.code = 'RATE_LIMIT_EXCEEDED';
+          error.provider = this.provider;
+          error.status = response.status;
+          throw error;
+        }
+
+        // Check for overloaded errors (common with Claude/Anthropic)
+        if (errorData.includes('overloaded') || errorData.includes('Overloaded')) {
+          const error = new Error(`${this.provider} API overloaded`);
+          error.code = 'API_OVERLOADED';
+          error.provider = this.provider;
+          error.status = response.status;
+          throw error;
+        }
+
         throw new Error(`${this.provider} API error (${response.status}): ${errorData}`);
       }
 
@@ -277,17 +291,54 @@ export class LLMClient {
       const schemaName = format.name || 'StructuredResponse';
       const strict = format.strict !== false;
 
+      // FIX 2: Add additionalProperties: false for OpenAI strict mode
+      const enhancedSchema = strict ? this._addAdditionalPropertiesFalse(format.schema) : format.schema;
+
       return {
         type: 'json_schema',
         json_schema: {
           name: schemaName,
-          schema: format.schema,
+          schema: enhancedSchema,
           strict
         }
       };
     }
 
     return undefined;
+  }
+
+  /**
+   * Add additionalProperties: false to schema for OpenAI strict mode (FIX 2)
+   * OpenAI requires this for all object types when using strict mode
+   */
+  _addAdditionalPropertiesFalse(schema) {
+    if (typeof schema !== 'object' || schema === null) {
+      return schema;
+    }
+
+    const enhanced = { ...schema };
+
+    // Add to root object
+    if (enhanced.type === 'object' && !('additionalProperties' in enhanced)) {
+      enhanced.additionalProperties = false;
+    }
+
+    // Recursively add to nested objects in properties
+    if (enhanced.properties) {
+      enhanced.properties = Object.fromEntries(
+        Object.entries(enhanced.properties).map(([key, value]) => [
+          key,
+          this._addAdditionalPropertiesFalse(value)
+        ])
+      );
+    }
+
+    // Handle arrays
+    if (enhanced.items) {
+      enhanced.items = this._addAdditionalPropertiesFalse(enhanced.items);
+    }
+
+    return enhanced;
   }
 
   _mapGeminiResponseFormat(format, baseConfig) {
@@ -481,6 +532,7 @@ export class LLMClient {
           return '';
         }
 
+        // Check for native JSON response first (when beta header is available)
         for (const item of responseData.content) {
           if (item?.json !== undefined) {
             return item.json;
@@ -493,7 +545,15 @@ export class LLMClient {
           }
         }
 
-        return responseData.content?.[0]?.text || '';
+        // Fall back to text content with markdown stripping (FIX 1)
+        let textContent = responseData.content?.[0]?.text || '';
+
+        // Strip markdown code blocks if present (```json ... ``` or ``` ... ```)
+        if (textContent.includes('```')) {
+          textContent = textContent.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
+        }
+
+        return textContent;
 
       case 'gpt':
         if (!responseData?.choices || responseData.choices.length === 0) {
@@ -531,12 +591,18 @@ export class LLMClient {
         const parts = responseData.candidates[0]?.content?.parts;
         if (Array.isArray(parts) && parts.length > 0) {
           const first = parts[0];
+
+          // Check for function call format
           if (first?.functionCall?.args) {
             return first.functionCall.args;
           }
+
+          // Check for native JSON field (rare)
           if (first?.json) {
             return first.json;
           }
+
+          // FIX 3: Most common - text field contains JSON string (gemini-2.5-flash-lite)
           if (typeof first?.text === 'string') {
             return first.text;
           }

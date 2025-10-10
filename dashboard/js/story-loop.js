@@ -38,8 +38,71 @@ class StoryLoopController {
     this.elements.startButton?.addEventListener('click', () => this.startLoop());
     this.elements.stopButton?.addEventListener('click', () => this.stopLoop());
 
+    // Local chat toggle and send
+    this.setupLocalChat();
+
     // Register event handlers
     this.registerEventHandlers();
+  }
+
+  setupLocalChat() {
+    const localChatToggle = document.getElementById('local-chat-toggle');
+    const localChatInput = document.getElementById('local-chat-input');
+    const localChatMessage = document.getElementById('local-chat-message');
+    const sendButton = document.getElementById('send-local-chat');
+
+    // Local chat input is ALWAYS visible
+    if (localChatInput) {
+      localChatInput.style.display = 'flex';
+    }
+
+    // Restore toggle state from localStorage (default: unchecked = YouTube enabled)
+    const savedState = localStorage.getItem('localChatOnly') === 'true';
+    if (localChatToggle) {
+      localChatToggle.checked = savedState;
+    }
+
+    // Toggle YouTube chat listener
+    // Checked = Local Chat Only (YouTube OFF)
+    // Unchecked = Both Local Chat and YouTube (YouTube ON)
+    localChatToggle?.addEventListener('change', async (e) => {
+      const localChatOnly = e.target.checked;
+
+      // Save state to localStorage
+      localStorage.setItem('localChatOnly', localChatOnly);
+
+      // Send settings update to stop/start YouTube chat listener
+      // When localChatOnly is TRUE, we want YouTube DISABLED (localChat: true means disable YouTube)
+      this.dashboard.sendCommand('settings', 'update', { localChat: localChatOnly });
+      console.log(`${localChatOnly ? 'Local chat only' : 'Both local chat and YouTube'} - YouTube listener ${localChatOnly ? 'stopped' : 'started'}`);
+    });
+
+    // Send local chat message
+    const sendMessage = async () => {
+      const message = localChatMessage?.value.trim();
+      if (!message) return;
+
+      try {
+        const response = await fetch('/api/chat/local-message', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message })
+        });
+
+        if (response.ok) {
+          localChatMessage.value = '';
+        } else {
+          console.error('Failed to send local chat message');
+        }
+      } catch (error) {
+        console.error('Error sending local chat message:', error);
+      }
+    };
+
+    sendButton?.addEventListener('click', sendMessage);
+    localChatMessage?.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') sendMessage();
+    });
   }
 
   registerEventHandlers() {
@@ -51,7 +114,10 @@ class StoryLoopController {
       'timer:countdown': (data) => this.handleTimerCountdown(data),
       'loop:voting_complete': (data) => this.handleVotingComplete(data),
       'loop:cleanup_complete': (data) => this.handleCleanupComplete(data),
-      'chat:message': (data) => this.handleChatMessage(data)
+      'chat:message': (data) => this.handleChatMessage(data),
+      'platform_status': (data) => this.handlePlatformStatus(data),
+      'story_loop:started': (data) => this.handleLoopStarted(data),
+      'story_loop:stopped': (data) => this.handleLoopStopped(data)
     };
 
     // Register with dashboard message handlers
@@ -233,7 +299,7 @@ class StoryLoopController {
     const messagesHtml = this.chatMessages.map(msg => `
       <div class="chat-message ${msg.isVote ? 'vote' : ''}">
         <span class="chat-author">${msg.author}:</span>
-        <span class="chat-text">${this.escapeHtml(msg.text)}</span>
+        <span class="chat-text">${Utils.escapeHtml(msg.text)}</span>
       </div>
     `).join('');
 
@@ -295,11 +361,7 @@ class StoryLoopController {
     return classes[phase] || '';
   }
 
-  escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-  }
+
 
   startLoop() {
     console.log('▶️ Starting story loop');
@@ -327,6 +389,38 @@ class StoryLoopController {
 
     this.elements.startButton.disabled = false;
     this.elements.stopButton.disabled = true;
+  }
+
+  handlePlatformStatus(data) {
+    // Update button states based on loop status
+    if (data.storyLoop) {
+      const isRunning = data.storyLoop.running;
+      this.elements.startButton.disabled = isRunning;
+      this.elements.stopButton.disabled = !isRunning;
+
+      if (data.storyLoop.phase && data.storyLoop.phase !== 'idle') {
+        this.currentPhase = data.storyLoop.phase;
+        this.currentIteration = data.storyLoop.iteration || 0;
+        this.elements.phase.textContent = this.formatPhaseName(data.storyLoop.phase);
+        this.elements.iteration.textContent = this.currentIteration;
+        this.elements.phase.className = `status-value phase-badge ${this.getPhaseClass(data.storyLoop.phase)}`;
+      }
+    }
+  }
+
+  handleLoopStarted(data) {
+    console.log('▶️ Loop started');
+    this.elements.startButton.disabled = true;
+    this.elements.stopButton.disabled = false;
+  }
+
+  handleLoopStopped(data) {
+    console.log('⏹️ Loop stopped');
+    this.elements.startButton.disabled = false;
+    this.elements.stopButton.disabled = true;
+    this.currentPhase = 'idle';
+    this.elements.phase.textContent = 'Idle';
+    this.elements.phase.className = 'status-value phase-badge badge-inactive';
   }
 
   destroy() {

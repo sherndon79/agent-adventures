@@ -103,7 +103,13 @@ export class OrchestratorManager extends EventEmitter {
       filePath = path.join(this.configDirectory, filename);
     }
 
-    const raw = await fs.readFile(filePath, 'utf8');
+    // Security check to prevent directory traversal
+    const resolvedPath = path.resolve(filePath);
+    if (!resolvedPath.startsWith(path.resolve(this.configDirectory))) {
+      throw new Error('Attempted to access a file outside the configuration directory.');
+    }
+
+    const raw = await fs.readFile(resolvedPath, 'utf8');
     const parsed = JSON.parse(raw);
 
     if (!parsed.id) {

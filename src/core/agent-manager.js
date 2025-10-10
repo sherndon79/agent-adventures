@@ -434,6 +434,10 @@ export class AgentManager extends EventEmitter {
     const moduleUrl = pathToFileURL(modulePath).href;
 
     // Dynamic import with cache busting for reloads
+    // WARNING: This cache-busting technique can lead to memory leaks as old
+    // module versions are not garbage-collected. A more robust solution
+    // should be implemented when available (e.g., using the second argument
+    // of import() when it becomes stable).
     const AgentClass = await import(`${moduleUrl}?t=${Date.now()}`);
     const AgentConstructor = AgentClass.default || AgentClass[manifest.name];
 

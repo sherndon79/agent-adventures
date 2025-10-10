@@ -45,27 +45,52 @@ class ActivityLog {
   }
 
   addEntry(level, source, message) {
+    let actualLevel, actualSource, actualMessage;
+
+    if (typeof level === 'object' && level !== null) {
+      // Object format: {type, source, message}
+      actualLevel = level.type || 'info';
+      actualSource = level.source || 'UNKNOWN';
+      actualMessage = level.message || '';
+    } else {
+      // Individual parameters
+      actualLevel = level;
+      actualSource = source;
+      actualMessage = message;
+    }
+
     const timestamp = new Date();
     const entry = {
       id: Date.now() + Math.random(),
       timestamp,
-      level: level.toLowerCase(),
-      source: source.toUpperCase(),
-      message: message.trim()
+      level: actualLevel.toLowerCase(),
+      source: actualSource.toUpperCase(),
+      message: actualMessage.trim()
     };
 
-    // Add to entries array
     this.logEntries.push(entry);
-
-    // Limit entries to prevent memory issues
     if (this.logEntries.length > this.maxLogEntries) {
       this.logEntries.shift();
     }
 
-    // Update display
-    this.updateLogDisplay();
+    // Append new entry if it passes the current filter
+    if (this.shouldDisplay(entry)) {
+      this.appendLogEntry(entry);
+    }
+  }
 
-    // Auto-scroll if enabled
+  appendLogEntry(entry) {
+    const logContainer = document.getElementById('activity-log');
+    if (!logContainer) return;
+
+    const logHTML = this.createLogEntryHTML(entry);
+    logContainer.insertAdjacentHTML('beforeend', logHTML);
+
+    // Limit displayed entries
+    while (logContainer.children.length > 200) {
+      logContainer.firstChild.remove();
+    }
+
     if (this.autoScroll) {
       this.scrollToBottom();
     }
@@ -75,18 +100,30 @@ class ActivityLog {
     const logContainer = document.getElementById('activity-log');
     if (!logContainer) return;
 
-    // Filter entries based on current filter
     const filteredEntries = this.getFilteredEntries();
+    const displayEntries = filteredEntries.slice(-200);
+    logContainer.innerHTML = displayEntries.map(entry => this.createLogEntryHTML(entry)).join('');
 
-    // Limit displayed entries for performance
-    const maxDisplayEntries = 200;
-    const displayEntries = filteredEntries.slice(-maxDisplayEntries);
+    if (this.autoScroll) {
+      this.scrollToBottom();
+    }
+  }
 
-    // Build HTML
-    const logHTML = displayEntries.map(entry => this.createLogEntryHTML(entry)).join('');
+  shouldDisplay(entry) {
+    if (this.currentFilter === 'all') return true;
 
-    // Update container
-    logContainer.innerHTML = logHTML;
+    switch (this.currentFilter) {
+      case 'competitions':
+        return entry.level === 'competition' || entry.source === 'JUDGE';
+      case 'agents':
+        return ['CLAUDE', 'GEMINI', 'GPT'].includes(entry.source) || entry.level === 'agent';
+      case 'system':
+        return ['SYSTEM', 'WEBSOCKET', 'HEALTH', 'METRICS', 'COMMAND', 'INIT'].includes(entry.source);
+      case 'errors':
+        return entry.level === 'error';
+      default:
+        return true;
+    }
   }
 
   createLogEntryHTML(entry) {
@@ -104,7 +141,7 @@ class ActivityLog {
       <div class="log-entry ${levelClass}" data-level="${entry.level}">
         <span class="log-time">${timeString}</span>
         <span class="log-source ${sourceClass}">${entry.source}</span>
-        <span class="log-message">${this.escapeHtml(entry.message)}</span>
+        <span class="log-message">${Utils.escapeHtml(entry.message)}</span>
       </div>
     `;
   }
@@ -187,12 +224,7 @@ class ActivityLog {
     }
   }
 
-  // Utility methods
-  escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-  }
+
 
   formatLogLevel(level) {
     switch (level) {

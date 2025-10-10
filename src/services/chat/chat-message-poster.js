@@ -9,7 +9,7 @@ import { google } from 'googleapis';
 import { readFileSync } from 'fs';
 
 export class ChatMessagePoster {
-  constructor({ apiKey, liveChatId, oauthTokenPath, logger = console }) {
+  constructor({ apiKey, liveChatId, oauthTokenPath, logger = console, disabled = false }) {
     if (!apiKey && !oauthTokenPath) {
       throw new Error('Either YouTube API key or OAuth token path is required');
     }
@@ -21,6 +21,7 @@ export class ChatMessagePoster {
     this.liveChatId = liveChatId;
     this.oauthTokenPath = oauthTokenPath;
     this.logger = logger;
+    this._disabled = disabled;
 
     // Initialize YouTube API client with OAuth or API key
     let auth;
@@ -73,9 +74,29 @@ export class ChatMessagePoster {
   }
 
   /**
+   * Set disabled state dynamically
+   */
+  setDisabled(disabled) {
+    this._disabled = disabled;
+    this.logger.info(`[ChatMessagePoster] YouTube posting ${disabled ? 'disabled' : 'enabled'}`);
+  }
+
+  /**
+   * Get disabled state
+   */
+  isDisabled() {
+    return this._disabled;
+  }
+
+  /**
    * Post a message to chat
    */
   async postMessage(text) {
+    if (this._disabled) {
+      this.logger.info('[ChatMessagePoster] Skipping (disabled):', text);
+      return { success: true, skipped: true };
+    }
+
     if (!text || typeof text !== 'string') {
       this.logger.warn('[ChatMessagePoster] Invalid message text');
       return { success: false, error: 'Invalid message text' };

@@ -8,6 +8,11 @@ let bridgeSocket = null;
 
 const SUPERVISOR_API_URL = 'http://localhost:9998/control';
 
+// Export dashboardSockets so web-server can use them
+export function getDashboardSockets() {
+    return dashboardSockets;
+}
+
 // --- WebSocket Handling ---
 
 export function setupWebSocketServer(server) {
@@ -82,6 +87,105 @@ function handleBridgeConnection(ws) {
 function handleDashboardConnection(ws) {
     console.log('Dashboard client connected.');
     dashboardSockets.add(ws);
+
+    // Send current story loop state to newly connected client
+    if (global.webServerInstance?.storyState) {
+        const storyState = global.webServerInstance.storyState;
+        const votingState = storyState.getPath('voting');
+        const competitionState = storyState.getPath('competition');
+
+        console.log('[StreamController] Syncing state to new client:', {
+            hasVotingState: !!votingState,
+            votingStateKeys: votingState ? Object.keys(votingState) : [],
+            hasGenres: !!votingState?.genres,
+            genresLength: votingState?.genres?.length,
+            hasTally: !!votingState?.tally,
+            tallyKeys: votingState?.tally ? Object.keys(votingState.tally) : [],
+            hasWinner: !!votingState?.winner,
+            hasCompetitionState: !!competitionState,
+            hasCompetitionWinner: !!competitionState?.winner
+        });
+
+        // Send current voting state if available
+        if (votingState?.genres) {
+            console.log('[StreamController] Sending genres to client');
+            ws.send(JSON.stringify({
+                type: 'loop:genres_ready',
+                data: { genres: votingState.genres }
+            }));
+
+            // If voting has a tally (active or complete), send voting_started to initialize vote bars
+            // This MUST happen before sending vote:received events or voting:complete
+            if (votingState.tally !== undefined) {
+                console.log('[StreamController] Sending voting_started to initialize vote bars');
+                ws.send(JSON.stringify({
+                    type: 'loop:voting_started',
+                    data: { genres: votingState.genres }
+                }));
+            }
+        }
+
+        // Send current vote tally if available (for live vote counts during active voting)
+        if (votingState?.tally && Object.keys(votingState.tally).length > 0) {
+            console.log('[StreamController] Sending current vote tally to client');
+            // Send individual vote:received events for each genre with votes
+            for (const [genreId, tallyData] of Object.entries(votingState.tally)) {
+                if (tallyData.votes > 0) {
+                    // Send one vote:received event per voter to reconstruct the vote state
+                    tallyData.voters.forEach(voter => {
+                        ws.send(JSON.stringify({
+                            type: 'vote:received',
+                            data: {
+                                userId: voter.userId,
+                                genreId: Number.parseInt(genreId, 10),
+                                genreName: tallyData.name,
+                                author: voter.author,
+                                totalVotes: votingState.tally ? Object.values(votingState.tally).reduce((sum, g) => sum + g.votes, 0) : 0
+                            }
+                        }));
+                    });
+                }
+            }
+        }
+
+        if (votingState?.winner) {
+            console.log('[StreamController] Sending voting winner to client');
+            ws.send(JSON.stringify({
+                type: 'voting:complete',
+                data: {
+                    winner: votingState.winner,
+                    votes: votingState.tally || {}
+                }
+            }));
+        }
+
+        // Send current competition state if available
+        if (competitionState?.winner) {
+            console.log('[StreamController] Sending competition winner to client');
+            ws.send(JSON.stringify({
+                type: 'loop:judging_complete',
+                data: {
+                    winner: competitionState.winner,
+                    decision: competitionState.decision
+                }
+            }));
+        }
+    } else {
+        console.warn('[StreamController] Cannot sync state - storyState not available');
+    }
+
+    ws.on('message', (message) => {
+        try {
+            const data = JSON.parse(message);
+            console.log('[StreamController] Dashboard message:', data);
+            // Forward to webServer handler if available
+            if (global.webServerInstance?._handleClientMessage) {
+                global.webServerInstance._handleClientMessage(ws, data);
+            }
+        } catch (error) {
+            console.error('Error processing dashboard message:', error);
+        }
+    });
 
     ws.on('close', () => {
         console.log('Dashboard client disconnected.');

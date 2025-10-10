@@ -78,35 +78,35 @@ export const config = {
       apiKey: process.env.ANTHROPIC_API_KEY,
       baseURL: 'https://api.anthropic.com',
       model: 'claude-sonnet-4-5-20250929', // Latest Sonnet 4.5 baseline (verified 2025-10-03)
-      maxTokens: 1000,
+      maxTokens: 6000,
       responseFormatBeta: process.env.ANTHROPIC_RESPONSE_FORMAT_BETA
     },
     openai: {
       apiKey: process.env.OPENAI_API_KEY,
       baseURL: 'https://api.openai.com/v1',
       model: 'gpt-5-mini', // Cost-effective GPT-5 tier
-      maxTokens: 1000
+      maxTokens: 6000
     },
     google: {
       apiKey: process.env.GOOGLE_API_KEY,
       baseURL: 'https://generativelanguage.googleapis.com/v1',
-      model: 'gemini-2.5-pro-preview-06-05', // Gemini 2.5 Pro preview (verified 2025-10-03)
-      maxTokens: 1000
+      model: 'gemini-2.5-flash-lite', // Stable non-thinking model, optimized for speed and cost
+      maxTokens: 6000
     },
 
     // Mid-tier models for judge panel decisions - balance cost and quality
     judge: {
       anthropic: {
         model: 'claude-sonnet-4-20250514', // Same as agents - good reasoning at reasonable cost
-        maxTokens: 1500
+        maxTokens: 9000
       },
       openai: {
         model: 'gpt-5-mini', // Use mini for cost efficiency
-        maxTokens: 1500
+        maxTokens: 9000
       },
       google: {
         model: 'gemini-2.5-pro', // Gemini's current model
-        maxTokens: 1500
+        maxTokens: 9000
       }
     }
   },
@@ -185,13 +185,13 @@ export const config = {
 
   // Token Optimization
   tokens: {
-    maxPerProposal: parseInteger(process.env.MAX_TOKENS_PER_PROPOSAL, 100),
-    maxPerDecision: parseInteger(process.env.MAX_TOKENS_PER_DECISION, 50),
+    maxPerProposal: parseInteger(process.env.MAX_TOKENS_PER_PROPOSAL, 8000),
+    maxPerDecision: parseInteger(process.env.MAX_TOKENS_PER_DECISION, 2000),
     enableTracking: parseBoolean(process.env.ENABLE_TOKEN_TRACKING, true),
-    mockLLMMode: parseBoolean(process.env.MOCK_LLM_MODE, true),
-    enforceBudgets: parseBoolean(process.env.ENFORCE_TOKEN_BUDGETS ?? 'true', true),
-    cycleBudget: parseInteger(process.env.TOKEN_BUDGET_PER_CYCLE, 800),
-    dailyBudget: parseInteger(process.env.TOKEN_BUDGET_PER_DAY, 20000),
+    mockLLMMode: parseBoolean(process.env.MOCK_LLM_MODE, false),
+    enforceBudgets: parseBoolean(process.env.ENFORCE_TOKEN_BUDGETS ?? 'false', false),
+    cycleBudget: parseInteger(process.env.TOKEN_BUDGET_PER_CYCLE, 50000),
+    dailyBudget: parseInteger(process.env.TOKEN_BUDGET_PER_DAY, 500000),
     cycleWindowMs: parseInteger(process.env.TOKEN_BUDGET_CYCLE_WINDOW_MS, 600000)
   },
 

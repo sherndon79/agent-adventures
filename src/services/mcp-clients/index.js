@@ -35,6 +35,30 @@ export class MCPClientManager {
   }
 
   /**
+   * Call a tool on a specific MCP client
+   * @param {string} clientName - Name of the client (worldBuilder, worldViewer, etc.)
+   * @param {string} toolName - Name of the tool/command to execute
+   * @param {object} params - Parameters for the tool
+   */
+  async callTool(clientName, toolName, params = {}) {
+    // Normalize client name to camelCase (worldbuilder -> worldBuilder)
+    const normalizedName = clientName.replace(/^world/, 'world') // Keep 'world' prefix
+      .replace(/builder/i, 'Builder')
+      .replace(/viewer/i, 'Viewer')
+      .replace(/surveyor/i, 'Surveyor')
+      .replace(/streamer/i, 'Streamer')
+      .replace(/recorder/i, 'Recorder');
+
+    const client = this.clients[normalizedName];
+    if (!client) {
+      throw new Error(`Unknown MCP client: ${clientName} (tried ${normalizedName})`);
+    }
+
+    // Use the client's executeCommand method
+    return await client.executeCommand(toolName, params);
+  }
+
+  /**
    * Get all client instances
    */
   getAllClients() {

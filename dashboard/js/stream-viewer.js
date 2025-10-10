@@ -7,12 +7,14 @@ class StreamViewer {
   constructor(dashboard) {
     this.dashboard = dashboard;
     this.streamActive = false;
-    this.webrtcPlayer = null;
     this.activeSession = null;
     this.healthDetails = [];
 
     this.streamContainer = document.getElementById('stream-player');
     this.launchAdventureButton = document.getElementById('launch-adventure');
+    this.updateStreamButton = document.getElementById('update-youtube-stream');
+    this.youtubeIdInput = document.getElementById('youtube-id-input');
+
     if (this.streamContainer) {
       this.showStreamPlaceholder(this.streamContainer);
     }
@@ -22,17 +24,73 @@ class StreamViewer {
     console.log('✅ StreamViewer module initialized');
   }
 
-  async fetchInitialStatus() {
-    try {
-      const response = await fetch('/api/stream/status');
-      if (!response.ok) {
-        throw new Error(`Failed to fetch initial status (${response.status})`);
+  async updateYouTubeStream() {
+    const newId = this.youtubeIdInput.value.trim();
+    if (newId) {
+      // Persist to localStorage
+      localStorage.setItem('youtubeBroadcastId', newId);
+
+      // Update the frontend iframe
+      this.loadYouTubeStream(newId);
+      this.youtubeIdInput.value = ''; // Clear the input
+      this.dashboard.logActivity('stream', 'CONTROL', `Updated YouTube Stream ID to: ${newId}`);
+
+      // Send the new ID to the backend
+      try {
+        const response = await fetch('/api/youtube/broadcast-id', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ broadcastId: newId })
+        });
+        if (!response.ok) {
+          throw new Error('Failed to update backend broadcast ID');
+        }
+        this.dashboard.logActivity('system', 'YOUTUBE', `Backend broadcast ID updated successfully.`);
+      } catch (error) {
+        this.dashboard.logActivity('error', 'YOUTUBE', `Error updating backend broadcast ID: ${error.message}`);
       }
-      const data = await response.json();
-      this.updateStreamStatus(data);
-    } catch (error) {
-      console.error('Error fetching initial stream status:', error);
     }
+  }
+
+  async fetchInitialStatus() {
+    // Check for a saved ID in localStorage first
+    const savedId = localStorage.getItem('youtubeBroadcastId');
+    if (savedId) {
+      console.log(`Found saved YouTube ID in localStorage: ${savedId}`);
+      this.loadYouTubeStream(savedId);
+      return; // Don't fetch the default from the backend
+    }
+
+    // Load YouTube stream embed
+    try {
+      const response = await fetch('/api/stream/youtube-id');
+      if (response.ok) {
+        const data = await response.json();
+        if (data.streamId) {
+          this.loadYouTubeStream(data.streamId);
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching YouTube stream ID:', error);
+    }
+  }
+
+  loadYouTubeStream(streamId) {
+    if (!this.streamContainer) return;
+
+    const iframe = document.createElement('iframe');
+    iframe.width = '100%';
+    iframe.height = '100%';
+    iframe.src = `https://www.youtube.com/embed/${streamId}`;
+    iframe.frameBorder = '0';
+    iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
+    iframe.allowFullscreen = true;
+    iframe.style.border = 'none';
+
+    this.streamContainer.innerHTML = '';
+    this.streamContainer.appendChild(iframe);
   }
 
 
@@ -51,6 +109,10 @@ class StreamViewer {
 
     if (this.launchAdventureButton) {
       this.launchAdventureButton.addEventListener('click', () => this.launchAdventure());
+    }
+
+    if (this.updateStreamButton) {
+      this.updateStreamButton.addEventListener('click', () => this.updateYouTubeStream());
     }
   }
 
@@ -85,41 +147,28 @@ class StreamViewer {
   async launchAdventure() {
     if (!this.launchAdventureButton) return;
 
-    const payload = {
-      adventureId: 'sample-adventure',
-      initialContext: {
-        story: {
-          beat: 'A cosmic convergence over the Aetheric Spire',
-          location: 'Central plaza of the floating city',
-          activeCharacters: ['Liora', 'Bram', 'Elder Keth'],
-          conflict: 'Channeling the spire without fracturing reality'
-        }
-      }
-    };
-
     this.launchAdventureButton.disabled = true;
-    this.launchAdventureButton.textContent = 'Launching…';
+    this.launchAdventureButton.textContent = 'Creating…';
 
     try {
-      const response = await fetch('/api/orchestrator/start', {
+      const response = await fetch('/api/test/quick-scene', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        headers: { 'Content-Type': 'application/json' }
       });
 
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(errorText || `Failed to launch adventure (${response.status})`);
+        throw new Error(errorText || `Failed to create test scene (${response.status})`);
       }
 
       const data = await response.json().catch(() => ({}));
-      this.dashboard.logActivity('orchestrator', 'CONTROL', `Adventure launch requested: ${data.adventureId || payload.adventureId}`);
+      this.dashboard.logActivity('system', 'TEST', `Quick test scene created successfully`);
     } catch (error) {
-      console.error('Error launching adventure:', error);
-      this.dashboard.logActivity('error', 'ORCHESTRATOR', `Launch failed: ${error.message}`);
+      console.error('Error creating test scene:', error);
+      this.dashboard.logActivity('error', 'TEST', `Scene creation failed: ${error.message}`);
     } finally {
       this.launchAdventureButton.disabled = false;
-      this.launchAdventureButton.textContent = 'Launch Adventure';
+      this.launchAdventureButton.textContent = 'Quick Test Scene';
     }
   }
 
@@ -160,66 +209,18 @@ class StreamViewer {
   updateStreamPlayer() {
     if (!this.streamContainer) return;
 
-    if (this.streamActive && this.activeSession) {
-      this.startWebRTCPlayer(this.streamContainer, this.activeSession);
-    } else {
-      this.stopWebRTCPlayer(this.streamContainer);
-    }
-  }
-
-  startWebRTCPlayer(container, session) {
-    if (this.webrtcPlayer) {
-      this.stopWebRTCPlayer();
-    }
-
-    // Clear placeholder content
-    container.innerHTML = '';
-
-    try {
-      const previewUrl = session.webRTCMonitorUrl;
-
-      if (!previewUrl) {
-        this.showStreamError(container, 'WebRTC preview unavailable');
-        return;
+    if (this.streamActive) {
+      // The YouTube iframe is already loaded, so we just need to ensure the placeholder is hidden.
+      const placeholder = this.streamContainer.querySelector('.stream-placeholder');
+      if (placeholder) {
+        placeholder.style.display = 'none';
       }
-
-      const iframe = document.createElement('iframe');
-      iframe.className = 'webrtc-frame';
-      iframe.src = previewUrl;
-      iframe.allow = 'autoplay; fullscreen; picture-in-picture';
-      iframe.setAttribute('title', 'WebRTC preview');
-      iframe.setAttribute('loading', 'eager');
-
-      const liveIndicator = document.createElement('div');
-      liveIndicator.className = 'stream-indicator';
-      liveIndicator.textContent = '🔴 LIVE';
-
-      container.appendChild(liveIndicator);
-      container.appendChild(iframe);
-
-      this.webrtcPlayer = iframe;
-
-      this.dashboard.logActivity('stream', 'PLAYER', 'WebRTC preview embedded');
-
-    } catch (error) {
-      console.error('Failed to start WebRTC player:', error);
-      this.dashboard.logActivity('error', 'PLAYER', `WebRTC player failed: ${error.message}`);
-      this.showStreamError(container, 'Failed to connect to stream');
+    } else {
+      this.showStreamPlaceholder(this.streamContainer);
     }
   }
 
-  stopWebRTCPlayer(container) {
-    if (this.webrtcPlayer) {
-      this.webrtcPlayer.remove();
-      this.webrtcPlayer = null;
-    }
 
-    if (container) {
-      this.showStreamPlaceholder(container);
-    }
-
-    this.dashboard.logActivity('stream', 'PLAYER', 'WebRTC player stopped');
-  }
 
   showStreamPlaceholder(container) {
     container.innerHTML = `
@@ -245,44 +246,12 @@ class StreamViewer {
   getStreamStatus() {
     return {
       active: this.streamActive,
-      hasPlayer: !!this.webrtcPlayer,
       session: this.activeSession,
       health: this.healthDetails
     };
   }
 
-  updateStreamMetrics() {
-    const qualityElement = document.getElementById('stream-quality');
-    const latencyElement = document.getElementById('stream-latency');
-    const viewerCountElement = document.getElementById('viewer-count');
 
-    if (qualityElement) {
-      if (this.streamActive && this.activeSession) {
-        const bitrate = this.activeSession.videoBitrateK ? `${this.activeSession.videoBitrateK} kbps` : 'auto';
-        const fps = this.activeSession.fps || 'N/A';
-        qualityElement.textContent = `${bitrate} @ ${fps} fps`;
-      } else {
-        qualityElement.textContent = 'Not streaming';
-      }
-    }
-
-    if (latencyElement) {
-      if (this.healthDetails.length) {
-        const summary = this.healthDetails
-          .map(item => `${item.name}:${item.status}`)
-          .join(' · ');
-        latencyElement.textContent = summary;
-      } else if (this.streamActive) {
-        latencyElement.textContent = 'Checking health...';
-      } else {
-        latencyElement.textContent = '--';
-      }
-    }
-
-    if (viewerCountElement) {
-      viewerCountElement.textContent = this.streamActive ? '--' : '0';
-    }
-  }
 
 
 
@@ -291,7 +260,6 @@ class StreamViewer {
       clearInterval(this.healthPollTimer);
       this.healthPollTimer = null;
     }
-    this.stopWebRTCPlayer();
     console.log('🔄 StreamViewer destroyed');
   }
 }

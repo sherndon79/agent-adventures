@@ -18,7 +18,8 @@ export const DASHBOARD_EVENT_TYPES = Object.freeze({
   COMPETITION_VOTING: 'competition_voting',
   COMPETITION_COMPLETED: 'competition_completed',
   SETTINGS_UPDATED: 'settings_updated',
-  ACTIVITY_LOG: 'activity_log'
+  ACTIVITY_LOG: 'activity_log',
+  AUDIO_MODE_UPDATED: 'audio:mode_updated'
 });
 
 export function adaptPlatformStatus(payload = {}) {

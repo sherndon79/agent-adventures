@@ -40,7 +40,9 @@ export class OrchestratorAudioResponder {
   }
 
   async _handleRequest(event) {
+    console.log('[AudioResponder] _handleRequest called, event type:', event?.type);
     const payload = this._extractPayload(event);
+    console.log('[AudioResponder] Extracted payload, requestId:', payload?.requestId);
     const requestId = payload?.requestId;
     if (!requestId) {
       return;
@@ -559,12 +561,8 @@ export class OrchestratorAudioResponder {
       return null;
     }
 
-    const { payload } = event;
-    if (payload && typeof payload === 'object' && 'payload' in payload) {
-      return payload.payload;
-    }
-
-    return payload || null;
+    // Return the event's payload directly - it contains requestId, stageId, stageConfig, and payload
+    return event.payload || null;
   }
 
   _emitResult({ requestId, stageId, result }) {

@@ -160,6 +160,8 @@ export class BaseAgent extends EventEmitter {
       this.metrics.eventsHandled++;
       this.metrics.lastActivity = startTime;
 
+      // The actual event handling logic is now in the specific handler
+      // or in the _handleEvent method if no specific handler is provided.
       const result = await this._handleEvent(event.type, event.payload, event);
 
       // Update response time metrics
@@ -392,9 +394,11 @@ export class BaseAgent extends EventEmitter {
     }
 
     for (const subscription of subscriptions) {
-      const { eventType, priority = 0, once = false } = subscription;
+      const { eventType, handler, priority = 0, once = false } = subscription;
 
-      const unsubscribe = eventBus.subscribe(eventType, this.handleEvent, {
+      const eventHandler = handler ? handler.bind(this) : this.handleEvent;
+
+      const unsubscribe = eventBus.subscribe(eventType, eventHandler, {
         priority,
         once
       });

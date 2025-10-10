@@ -315,12 +315,37 @@ export class StoryState extends EventEmitter {
   }
 
   /**
+   * Deep clone an object
+   */
+  _deepClone(obj) {
+    if (obj === null || typeof obj !== 'object') {
+      return obj;
+    }
+
+    if (obj instanceof Date) {
+      return new Date(obj.getTime());
+    }
+
+    if (Array.isArray(obj)) {
+      return obj.map(item => this._deepClone(item));
+    }
+
+    const newObj = {};
+    for (const key in obj) {
+      if (Object.prototype.hasOwnProperty.call(obj, key)) {
+        newObj[key] = this._deepClone(obj[key]);
+      }
+    }
+    return newObj;
+  }
+
+  /**
    * Create version object
    */
   _createVersion(state, description, metadata = {}) {
     return {
       version: this.currentVersion + 1,
-      state: JSON.parse(JSON.stringify(state)), // Deep clone
+      state: this._deepClone(state), // Deep clone
       timestamp: Date.now(),
       description,
       metadata

@@ -187,6 +187,9 @@ export function handleAudioConnection(ws) {
         case 'audio_complete':
           handleAudioComplete(data);
           break;
+        case 'audio_ready':
+          handleAudioReady(data);
+          break;
         case 'audio_error':
           handleAudioError(data);
           break;
@@ -261,6 +264,28 @@ function handleAudioComplete(data) {
 
   // Trigger next story beat if waiting for audio
   // eventBus.emit('audio:complete', data);
+}
+
+/**
+ * Handle audio ready notification (when audio starts streaming)
+ */
+function handleAudioReady(data) {
+  if (data.sync_id) {
+    console.log(`🎬 Synced audio ready: ${data.sync_id} [${data.channels?.join(', ')}]`);
+  } else {
+    console.log(`🎵 Audio ready: ${data.channel}`);
+  }
+
+  // Forward to event bus for orchestrator/story loop
+  if (global.eventBus) {
+    global.eventBus.emit('audio:ready', data);
+  }
+
+  // Also broadcast to dashboards for monitoring
+  broadcastToDashboards({
+    type: 'audio_ready',
+    data: data
+  });
 }
 
 /**
