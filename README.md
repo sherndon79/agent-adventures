@@ -1,69 +1,120 @@
 # Agent Adventures
 
-**Interactive Adventure Platform** - A choose-your-own-adventure streaming platform powered by AI agents and Isaac Sim.
+**AI-Driven Interactive Streaming Platform** - Autonomous storytelling through multi-agent scene generation, camera choreography, and audio narration, all streamed live from Isaac Sim.
 
 ## Overview
 
-Agent Adventures is the interactive storytelling platform component of the agent-world ecosystem. It orchestrates live, interactive streaming experiences where audiences participate in real-time story decisions that directly control 3D scenes in Isaac Sim.
+Agent Adventures is an autonomous AI streaming platform that creates interactive 3D scenes in real-time. Multiple AI agents compete to generate scenes, choreograph camera movements, and craft atmospheric audio - all orchestrated through a continuous story loop with audience participation.
 
-## Architecture
+## Current MVP Architecture
 
-This platform serves as the **Interactive Adventure Platform (External Application)** in the WorldStreamer architecture, providing:
+### Story Loop Workflow
+
+1. **Genre Selection** - Audience votes on scene genre via YouTube live chat
+2. **Agent Competition** - Multiple LLMs compete with proposals for:
+   - Scene design (3D layout and objects)
+   - Camera choreography (multi-shot sequences)
+   - Audio narration (voice, music, ambient)
+3. **Presentation** - Winning proposal executes in Isaac Sim with synchronized audio
+4. **Cleanup** - Scene resets and loop continues
 
 ### Core Components
 
-- **Multi-agent Director Panel**: Orchestrates story decisions and scene changes using AI agents
-- **Poll Question Engine**: Generates audience choices based on current story state
-- **Chat Interaction System**: Processes audience input and voting in real-time
-- **Scene Layout Controller**: Commands Isaac Sim scene changes via MCP interface
-- **OME Integration**: Consumes SRT streams from Isaac Sim WorldStreamer
-- **Multi-platform Routing**: Configures OME for YouTube/Twitch distribution
+- **Multi-Agent System**: Competitive proposal generation across Claude, GPT, and Gemini
+- **Story Loop Manager**: Orchestrates phase transitions (genre → competition → presentation → cleanup)
+- **MCP Integration**: Controls Isaac Sim via [agent-world](https://github.com/sherndon79/agent-world) extensions
+- **Audio Generator**: Multi-channel AI audio (narration, music, ambient) via agent-world infrastructure
+- **YouTube Chat Integration**: Real-time audience voting and interaction
+- **OBS Streaming**: Manual stream composition and broadcasting
 
 ### Integration Points
 
-- **Isaac Sim**: Scene control and 3D content generation via [agent-world](https://github.com/sherndon79/agent-world) MCP interface
-- **WorldStreamer**: Ultra-low latency SRT stream consumption from Isaac Sim
-- **OME (Open Media Engine)**: Stream routing and multi-platform RTMP broadcasting
-- **Streaming Platforms**: Live distribution to YouTube, Twitch, and other platforms
+- **Isaac Sim**: 3D scene generation via WorldBuilder MCP, camera control via WorldViewer MCP
+- **Audio Generator** (agent-world): 4-channel AI audio system with Kokoro TTS and Stable Audio
+- **YouTube API**: Live chat polling and audience interaction
+- **OBS**: Manual stream composition combining Isaac Sim video + AI audio channels
 
 ## Technical Features
 
-- **Real-time Interaction**: <2 second poll response times
-- **Scene Transitions**: <5 second scene change completion
-- **Chat Commands**: <1 second command execution
-- **Multi-platform Streaming**: Simultaneous broadcasting to multiple platforms
+### Multi-Agent Competition
+- **3-Stage Proposal System**: Scene → Camera → Audio
+- **LLM Diversity**: Claude (Sonnet), GPT-4, Gemini Pro
+- **Structured Output**: JSON schema validation with fallback handling
+- **Token Optimization**: Configurable budgets per proposal type
+
+### Story Loop Automation
+- **Phase-Based Architecture**: Genre selection, competition, presentation, cleanup
+- **Audio Mode Switching**: Story mode, commentary mode, or mixed
+- **Synchronized Playback**: Multi-channel audio with auto-ducking
+- **Camera Choreography**: Multi-shot sequences with smooth transitions
+
+### Audience Interaction
+- **YouTube Live Chat**: Real-time voting and genre selection
+- **Vote Aggregation**: Tally and winner selection
+- **Chat Commands**: Interactive control via live chat
 
 ## Development Status
 
-🚧 **Early Development** - This project is part of the WorldStreamer architecture vision currently being implemented.
+✅ **MVP Complete** - Core story loop operational with multi-agent scene generation, camera control, and AI audio
 
-### Current Phase
-- **Phase 3**: External Platform Foundation
-  - Developing multi-agent director framework
-  - Implementing OME management and stream routing control
-  - Creating MCP integration for Isaac Sim scene control
+### Implemented Features
+- ✅ Multi-LLM agent competition (Claude, GPT, Gemini)
+- ✅ YouTube live chat voting integration
+- ✅ Isaac Sim MCP integration (WorldBuilder, WorldViewer)
+- ✅ 4-channel AI audio system integration
+- ✅ Audio mode toggle (story/commentary/mixed)
+- ✅ Automated story loop with phase management
 
-### Upcoming Phases
-- **Phase 4**: Interactive Features (audience polling, chat interaction, story branching)
-- **Phase 5**: Broadcasting Integration (multi-platform streaming, analytics)
+### In Progress
+- 🔧 Debugging camera choreography and narration parsing
+- 🔧 Schema validation improvements for LLM responses
+- 🔧 OBS automation for stream composition
 
 ## Related Projects
 
-- [agent-world](https://github.com/sherndon79/agent-world) - Isaac Sim integration and WorldStreamer infrastructure
-- WorldStreamer Extension - SRT streaming from Isaac Sim (part of agent-world)
-- OME Configuration - SRT-to-RTMP conversion for multi-platform broadcasting
+- [agent-world](https://github.com/sherndon79/agent-world) - Isaac Sim extensions ecosystem
+  - **WorldBuilder**: 3D scene creation and manipulation
+  - **WorldViewer**: Camera control and cinematography
+  - **Audio Generator**: 4-channel AI audio system (narration, music, ambient, commentary)
+  - **MCP Servers**: Model Context Protocol integration for AI agents
 
-## Performance Targets
+## System Requirements
 
-- Stream uptime > 99%
-- End-to-end latency < 3 seconds
-- Frame drop rate < 0.1%
-- Audience retention rate optimization
+- **Isaac Sim 5.0.0** with agent-world extensions
+- **Node.js 18+** for orchestration platform
+- **Python 3.10+** for audio generator microservices
+- **OBS Studio** for stream composition
+- **YouTube API credentials** for chat integration
 
-## Getting Started
+## Quick Start
 
-*Documentation and setup instructions will be added as development progresses.*
+```bash
+# 1. Start Isaac Sim with agent-world extensions
+cd ~/agent-world && bash scripts/launch_agent_world.sh
+
+# 2. Start audio generator (from agent-world)
+cd ~/agent-world/docker/audio-generator && docker-compose up -d
+
+# 3. Start Agent Adventures orchestrator
+cd ~/agent-adventures
+npm install
+npm start
+
+# 4. Access dashboard
+open http://localhost:3001
+```
+
+## Configuration
+
+Key environment variables in `.env`:
+- `YOUTUBE_API_KEY` - YouTube Data API v3 key
+- `YOUTUBE_LIVE_BROADCAST_ID` - Current stream/video ID
+- `ANTHROPIC_API_KEY` - Claude API key
+- `OPENAI_API_KEY` - GPT-4 API key
+- `GOOGLE_API_KEY` - Gemini API key
+
+See `.env.example` for full configuration options.
 
 ## License
 
-TBD
+MIT
