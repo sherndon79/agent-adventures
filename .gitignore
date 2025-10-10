@@ -115,9 +115,9 @@ build/
 *.usd.bak
 assets/
 
-# Screenshot archives (keep current screenshots)
-screenshots/archive/
-screenshots/old/
+# Screenshots (troubleshooting only, not for repo)
+screenshots/
+
 # Development review docs
 docs/dev_docs/
 
